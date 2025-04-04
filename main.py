@@ -27,6 +27,8 @@ SR_SRCLK = Pin(8, Pin.OUT)   # Shift Register Serial Clock
 SR_RCLK  = Pin(9, Pin.OUT)   # Shift Register Reset Clock
 SR_OUT   = Pin(10, Pin.IN)   # Shift Register Output
 
+read_data = []
+    
 # --- Mode Pins Setup ---
 mode_pin0 = Pin(2, Pin.IN)
 mode_pin1 = Pin(3, Pin.IN)
@@ -91,54 +93,56 @@ def update_leds():
         for bit in led:
             LED_SER_IN.value(bit)
             LED_SRCK.value(1)
-            time.sleep_us(1)
+            time.sleep_us(100)
             LED_SRCK.value(0)
-            time.sleep_us(1)
+            time.sleep_us(100)
     LED_RCK.value(1)
-    time.sleep_us(1)
+    time.sleep_us(100)
     LED_RCK.value(0)
 
-def update_shift_register(data):
+
+def update_shift_registers(data):
     """
-    Update the 6 chained shift registers (controlling 47 outputs) with the provided data array.
+    Shifts 48 bits into the registers and reads back 48 bits.
     
-    data: A list of 0s and 1s. It should contain 47 values.
+    Args:
+        data (list of int): A list of 48 values (0 or 1).
+        
+    Returns:
+        list of int: The bits read from the shift register output.
     """
+    if len(data) != 48:
+        raise ValueError("Data must be a list of 48 bits (0 or 1).")
+    
+    read_data = []
+    
+    # Disable outputs if needed (assuming active low, so 0 enables outputs)
     SR_OE.value(0)
-    SR_RCLK.value(0)
+    
+    # Shift out 48 bits: 
+    # For each bit, set SER then pulse the SR_CLK
     for bit in data:
         SR_SER.value(bit)
+        # Give the data a moment to settle
+        time.sleep_us(1)
         SR_SRCLK.value(1)
         time.sleep_us(1)
         SR_SRCLK.value(0)
-        time.sleep_us(1)
+    
+    # Latch the data into the output registers
     SR_RCLK.value(1)
     time.sleep_us(1)
     SR_RCLK.value(0)
-
-def update_shift_register_mapped(user_data):
-    """
-    Update the shift registers using a user-provided array corresponding to physical pin numbers 1-50.
     
-    user_data: A list of 50 values (0s and 1s) for physical pins 1-50.
-    
-    This function uses the inverse mapping so that the bit for physical pin 3 (first in the shift registers)
-    is placed in the first position of the output array.
-    
-    Note: Physical pins 8, 19, and 36 are not connected to the shift register and are skipped.
-    """
-    if len(user_data) != 50:
-        print("Error: user_data array must have 50 elements.")
-        return
-    inverse_mapping = [None] * 50
-    for i, pin in enumerate(original_mapping):
-        inverse_mapping[pin - 1] = i
-    mapped_data = [0] * len(original_mapping)
-    for p in range(1, 51):
-        inv_index = inverse_mapping[p - 1]
-        if inv_index is not None:
-            mapped_data[inv_index] = user_data[p - 1]
-    update_shift_register(mapped_data)
+    # Now, read back 48 bits from SR_OUT
+    # Here we pulse the shift clock and read the bit at each pulse.
+    for i in range(48):
+        SR_SRCLK.value(1)
+        time.sleep_us(1)
+        bit = SR_OUT.value()
+        read_data.append(bit)
+        SR_SRCLK.value(0)
+        time.sleep_us(1)
 
 def set_wiper(pot, value):
     """
@@ -250,6 +254,15 @@ def command_listener():
                     set_fan_speed(speed)
                 except Exception as e:
                     print("Invalid speed value:", e)
+        elif cmd.startswith("write"):
+            parts = cmd.split()
+            if parts == 51:
+                update_shift_registers([
+                    parts[1],  parts[2],  parts[3],  parts[4],  parts[5],  parts[6],  parts[7],  parts[8],  parts[9],  parts[10],
+                    parts[11], parts[12], parts[13], parts[14], parts[15], parts[16], parts[17], parts[18], parts[19], parts[20],
+                    parts[21], parts[22], parts[23], parts[24], parts[25], parts[26], parts[27], parts[28], parts[29], parts[30],
+                    parts[31], parts[32], parts[32], parts[34], parts[35], parts[36], parts[37], parts[38], parts[39], parts[40],
+                    parts[41], parts[42], parts[43], parts[44], parts[45], parts[46], parts[47], parts[48]])
         else:
             print("Unknown command '{}'. Try 'shutdown', 'setres <channel> <value>', or 'readvolt <fixed|adjustable>'.".format(cmd))
 
@@ -291,13 +304,13 @@ def startup():
 # --- Main Execution ---
 
 startup()
-_thread.start_new_thread(command_listener, ())
+#_thread.start_new_thread(command_listener, ())
 
 # Example usage: Update the 50-pin connector's shift register using a test pattern.
-test_user_data = [1 if i % 2 == 0 else 0 for i in range(50)]
-update_shift_register_mapped(test_user_data)
+pattern = [i % 2 for i in range(48)]
+update_shift_registers(pattern)
 
-while True:
-    time.sleep(1)
+#while True:
+#    time.sleep(1)
 
 
