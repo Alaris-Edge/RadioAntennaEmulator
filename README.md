@@ -47,6 +47,15 @@ This will return 4 binary values for each of the FM pins to be read.
 
 A response will look like ``Current Mode: 0010``
 
+## Write and write from the shift registers
+To write to the DD50 connector ``write <[data]>``
+
+The ``data`` should be an array of binary values 50 charicters long to be written to the shift register.
+The value at value 6, 7, 8, 13, 19, 24, 34, 35, 36, 37, 40 and 46 is not not important as these are all currently used for other purposes.
+
+To read the previous value from the shift registers ``read``.
+This will return the previous value of the shift register or the most recent string of values that have been output.
+
 ## Kill Power
 The ``shutdown`` command will kill the power about 1000 milliseconds after it is received.
 
