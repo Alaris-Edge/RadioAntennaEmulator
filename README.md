@@ -45,7 +45,7 @@ Reading the current mode
 
 This will return 4 binary values for each of the FM pins to be read.
 
-A response will look like ``Current Mode: 0010``
+A response will look like ``Current Mode: <FM_00><FM_01><FM_02><FM_03>``
 
 ## Write and write from the shift registers
 To write to the DD50 connector ``write <[data]>``
