@@ -263,6 +263,8 @@ def command_listener():
                     parts[21], parts[22], parts[23], parts[24], parts[25], parts[26], parts[27], parts[28], parts[29], parts[30],
                     parts[31], parts[32], parts[32], parts[34], parts[35], parts[36], parts[37], parts[38], parts[39], parts[40],
                     parts[41], parts[42], parts[43], parts[44], parts[45], parts[46], parts[47], parts[48]])
+        elif cmd.startswith("read"):
+            print("Previous shift register: " + str(read_data))
         else:
             print("Unknown command '{}'. Try 'shutdown', 'setres <channel> <value>', or 'readvolt <fixed|adjustable>'.".format(cmd))
 
