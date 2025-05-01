@@ -306,13 +306,13 @@ def startup():
 # --- Main Execution ---
 
 startup()
-#_thread.start_new_thread(command_listener, ())
+_thread.start_new_thread(command_listener, ())
 
 # Example usage: Update the 50-pin connector's shift register using a test pattern.
 pattern = [i % 2 for i in range(48)]
 update_shift_registers(pattern)
 
-#while True:
-#    time.sleep(1)
+while True:
+    time.sleep(1)
 
 
