@@ -24,6 +24,7 @@ from voltage_control import (
 # Command registry and debug flag
 commands = {}
 debug_enabled = False
+#debug_enabled = True
 
 # Help text for CLI
 help_text = [
@@ -39,12 +40,11 @@ help_text = [
     "resetcal: Reset calibration to defaults and delete calibration file.",
 ]
 
-# Voltage targets (initialized at startup)
+# Voltage targets and wiper tracking
 target_voltages = {'fixed': 3.3, 'adjustable': 5.0}
-# Track current wiper positions (0-255)
-current_wipers = {'fixed': 127, 'adjustable': 127}
+current_wipers = {'fixed': 255, 'adjustable': 255}
 
-# Command implementations
+# --- Command Handlers ---
 
 def command_help():
     print("Available commands:")
@@ -59,7 +59,7 @@ def command_shutdown():
 def command_setres(pot, value):
     try:
         key = pot.lower()
-        if key in target_voltages:
+        if key in ('fixed', 'adjustable'):
             p = 1 if key == 'fixed' else 0
         else:
             p = int(pot)
@@ -80,15 +80,24 @@ def command_setvolt(channel, voltage):
             return
         target = float(voltage)
         slope, intercept = get_calibration(ch)
-        if slope is None or slope == 0:
+        raw_min, raw_max = 0, 65535
+        if slope == 0:
             print(f"Error: invalid calibration slope={slope}")
             return
-        raw_target = (target - (intercept or 0.0)) / slope
-        # Map raw ADC count (0-65535) to wiper value (0-255)
-        wiper_guess = int(max(0, min(255, raw_target * 255 / 65535)))
+        # Compute raw ADC count target
+        raw_target = (target - intercept) / slope
+        # Clamp raw_target within calibrated bounds
+        raw_target = max(raw_min, min(raw_max, raw_target))
+        # Map raw_target to wiper value
+        if ch == 'adjustable':
+            # inverted mapping
+            wiper_guess = int((raw_max - raw_target) * 255 / (raw_max - raw_min))
+        else:
+            wiper_guess = int((raw_target - raw_min) * 255 / (raw_max - raw_min))
+        wiper_guess = max(0, min(255, wiper_guess))
         p = 1 if ch == 'fixed' else 0
-        set_wiper(p, wiper_guess)
-        current_wipers[ch] = wiper_guess
+        #set_wiper(p, wiper_guess)
+        #current_wipers[ch] = wiper_guess
         target_voltages[ch] = target
         print(f"{ch} target set to {target:.3f} V, initial wiper {wiper_guess}")
     except Exception as e:
@@ -110,11 +119,12 @@ def command_readvolt(*args):
 
 
 def command_calibrate(channel):
-    if channel.lower() not in target_voltages:
+    ch = channel.lower()
+    if ch not in target_voltages:
         print("Error: channel must be 'fixed' or 'adjustable'.")
         return
-    pot = 0 if channel.lower() == 'adjustable' else 1
-    calibrate_channel(channel, pot)
+    pot = 0 if ch == 'adjustable' else 1
+    calibrate_channel(ch, pot)
 
 
 def command_calibrate_all():
@@ -127,6 +137,7 @@ def command_debugvolt(*args):
         if ch in target_voltages:
             raw = get_raw_count(ch)
             slope, intercept = get_calibration(ch)
+            raw_min, raw_max = 0, 65535
             v = read_voltage(ch)
             print(f"{ch} raw_count={raw}, slope={slope:.9f}, intercept={intercept:.6f}, voltage={v:.3f} V")
         else:
@@ -143,6 +154,7 @@ def command_resetcal():
     reset_calibration()
     print("Calibration reset to defaults.")
 
+# --- Command Registration ---
 
 def _register_commands():
     commands['help'] = command_help
@@ -156,6 +168,7 @@ def _register_commands():
     commands['debug'] = command_debug
     commands['resetcal'] = command_resetcal
 
+# --- CLI Listener ---
 
 def command_listener():
     while True:
@@ -168,10 +181,13 @@ def command_listener():
         else:
             print(f"Unknown command '{cmd}'. Type 'help' for list.")
 
+# --- Startup & Main Loop ---
 
 def startup():
+    #set_wiper(0,255)
+    #set_wiper(1,255)
+    time.sleep(1)
     print("Starting system... Command listener started. Type 'help' for available commands.")
-    # Welcome status
     fixed_v = read_voltage('fixed')
     adj_v = read_voltage('adjustable')
     print(f"Current voltages -> Fixed: {fixed_v:.2f} V, Adjustable: {adj_v:.2f} V")
@@ -190,12 +206,13 @@ if __name__ == '__main__':
             if debug_enabled:
                 print(f"[DEBUG] {ch}: current={current:.3f} V, target={tgt:.3f} V, wiper={current_wipers[ch]}")
             diff = current - tgt
-            if abs(diff) >= 0.01:
+            if abs(diff) >= 0.025:
                 step = 1 if diff > 0 else -1
                 new_w = max(0, min(255, current_wipers[ch] + step))
                 if debug_enabled:
                     print(f"[DEBUG] {ch}: diff={diff:.3f}, step={step}, new_wiper={new_w}")
                 if new_w != current_wipers[ch]:
-                    set_wiper(1 if ch=='fixed' else 0, new_w)
                     current_wipers[ch] = new_w
-        #time.sleep(0.1)
+                set_wiper(1 if ch == 'fixed' else 0, new_w)
+        #time.sleep(0.001)
+        #time.sleep(0)

@@ -1,60 +1,28 @@
-"""
-led_control.py
-
-Controls status LEDs via shift register, mapping adjustable voltage to LED0 color.
-"""
-
-import time
-from config import (
-    LED_OE,
-    LED_SRCK,
-    LED_RCK,
-    LED_SRCLR,
-    LED_SER_IN,
-    leds,
-    adjustable_led_color_options
-)
+from config import LED_OE, LED_SRCK, LED_RCK, LED_SRCLR, LED_SER_IN, leds, get_heat_map_color
 from voltage_control import read_voltage
-
+import time
 
 def update_leds():
-    """
-    Read adjustable rail voltage, update LED0 color, and shift out all LED bits.
-    """
-    # Read calibrated adjustable voltage
-    adjustable_v = read_voltage('adjustable')
+    '''Write current RGB bit patterns to the LED shift register, with LED0 as a heat-map.'''
+    # Update LED0 color based on adjustable voltage
+    adj_voltage = read_voltage('adjustable')
+    leds[0] = list(get_heat_map_color(adj_voltage))
 
-    # Determine color for LED0 based on thresholds
-    chosen_color = adjustable_led_color_options[-1][0]
-    for color, threshold in adjustable_led_color_options:
-        if adjustable_v <= threshold:
-            chosen_color = color
-            break
-    # Update LED0 RGB state
-    leds[0] = chosen_color
+    # Begin shift register cycle
+    LED_OE.value(0)       # Enable outputs
+    LED_SRCLR.value(1)    # Normal operation (not clearing)
+    LED_RCK.value(0)      # Prepare to latch new data
 
-    # Prepare bit sequence [R,G,B] for each LED in order
-    bit_sequence = []
-    for (r, g, b) in leds:
-        bit_sequence.extend([r, g, b])
-
-    # Begin shifting: clear shift register if needed (optional)
-    LED_SRCLR.value(1)  # ensure not clearing
-    LED_RCK.value(0)    # prepare to latch new data
-
-    # Shift out each bit (MSB first in sequence)
-    for bit in bit_sequence:
-        LED_SER_IN.value(bit)
-        # Pulse shift clock
-        LED_SRCK.value(1)
-        time.sleep_us(1)
-        LED_SRCK.value(0)
-        time.sleep_us(1)
+    # Shift out bits for all LEDs (each led is [R, G, B])
+    for led in leds:
+        for bit in led:
+            LED_SER_IN.value(bit)
+            LED_SRCK.value(1)
+            time.sleep_us(100)
+            LED_SRCK.value(0)
+            time.sleep_us(100)
 
     # Latch shifted data to outputs
     LED_RCK.value(1)
-    time.sleep_us(1)
+    time.sleep_us(100)
     LED_RCK.value(0)
-
-    # Ensure outputs enabled
-    LED_OE.value(0)
