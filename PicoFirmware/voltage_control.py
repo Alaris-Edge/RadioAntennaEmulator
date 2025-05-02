@@ -2,7 +2,7 @@
 voltage_control.py
 
 Handles ADC readings for fixed and adjustable voltage rails, shutdown, wiper control,
-calibration routines with persistent storage, and exposes debug getters.
+calibration routines with persistent storage, and debug accessors.
 """
 
 import time
@@ -28,6 +28,7 @@ _VREF = 3.3
 _NOMINAL_DIVIDER = 3.7
 _DEFAULT_SLOPE = (_VREF * _NOMINAL_DIVIDER) / _ADC_MAX
 
+# Calibration store
 _calibration = {
     'fixed':      {'slope': _DEFAULT_SLOPE, 'intercept': 0.0},
     'adjustable': {'slope': _DEFAULT_SLOPE, 'intercept': 0.0}
@@ -82,7 +83,8 @@ def set_wiper(pot, value):
         raise ValueError("Pot must be 0 or 1.")
     if not 0 <= value <= 255:
         raise ValueError("Value must be between 0 and 255.")
-    raw_value = 255 - value if pot == 0 else value
+    #raw_value = 255 - value if pot == 0 else value
+    raw_value = value
     cmd = 0x11 if pot == 0 else 0x12
     cs.value(0)
     spi.write(bytes((cmd, raw_value)))
@@ -92,15 +94,16 @@ def set_wiper(pot, value):
 def _read_raw_count(channel):
     if channel == 'fixed':
         return fixed_measure.read_u16()
-    if channel == 'adjustable':
+    elif channel == 'adjustable':
         return adjustable_measure.read_u16()
-    raise ValueError("Invalid channel. Use 'fixed' or 'adjustable'.")
+    else:
+        raise ValueError("Invalid channel. Use 'fixed' or 'adjustable'.")
 
 
 def read_voltage(channel):
     count = _read_raw_count(channel)
     cal = _calibration.get(channel, {})
-    return cal['slope'] * count + cal['intercept']
+    return cal.get('slope', _DEFAULT_SLOPE) * count + cal.get('intercept', 0.0)
 
 
 def calibrate_channel(channel, pot):
@@ -121,6 +124,7 @@ def calibrate_channel(channel, pot):
     raw0 = curr
     print(f"Settled raw count at wiper=0: {raw0}")
     v0 = float(input("Measured voltage at wiper=0 (V): "))
+
     set_wiper(pot, 255)
     print("Waiting for voltage to settle at wiper=255", end="")
     prev = _read_raw_count(channel)
@@ -137,11 +141,12 @@ def calibrate_channel(channel, pot):
     raw1 = curr
     print(f"Settled raw count at wiper=255: {raw1}")
     v1 = float(input("Measured voltage at wiper=255 (V): "))
+
     if raw1 < raw0:
         raw0, raw1 = raw1, raw0
         v0, v1 = v1, v0
     if raw1 == raw0:
-        raise ValueError("Calibration error: identical raw counts after sorting.")
+        raise ValueError("Calibration error: identical raw counts.")
     slope = (v1 - v0) / (raw1 - raw0)
     intercept = v0 - slope * raw0
     _calibration[channel] = {'slope': slope, 'intercept': intercept}
