@@ -44,25 +44,6 @@ def update_shift_registers(data):
         SR_SRCLK.value(0)
         time.sleep_us(1)
 
-def set_wiper(pot, value):
-    """
-    Writes 'value' (0–255) to the MCP42010's selected pot.
-    pot=0 -> Pot0, pot=1 -> Pot1
-    """
-    # Choose command byte based on pot selection
-    if pot == 0:
-        command = 0x11  # Write to Pot0
-    elif pot == 1:
-        command = 0x12  # Write to Pot1
-    else:
-        raise ValueError("Pot number must be 0 or 1")
-
-    # Start SPI transaction
-    cs.value(0)
-    spi.write(bytearray([command, value]))
-    cs.value(1)
-    
-
 def read_sense():
     print(f"Antenna Sense: {antenna_sense.read_u16()}")
 

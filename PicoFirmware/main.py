@@ -1,139 +1,141 @@
+"""
+main.py
+
+Entry point: startup sequence, CLI command listener, and main LED update loop.
+"""
+
 import _thread
 import time
 
-from config import *            # must define: leds (list), cs (Pin), shutdown_pico()
-from antenna_mode import *      # read_sense()
-from led_control import *       # update_leds(), set_wiper()
-from voltage_control import *   # read_voltage(), read_mode()
-from i2c import *               # update_shift_registers()
+from config import *
+from antenna_mode import update_shift_registers, read_sense, read_mode, set_fan_speed
+from led_control import update_leds
+from voltage_control import (
+    read_voltage,
+    shutdown_pico,
+    set_wiper,
+    calibrate_channel,
+    calibrate_all,
+    get_raw_count,
+    get_calibration,
+    reset_calibration,
+)
 
-# ——— GLOBALS ———
-pattern = []   # holds last 48-bit shift-register state
+commands = {}
+help_text = [
+    "help: Show this help message.",
+    "shutdown: Shutdown the Pico.",
+    "setres <pot> <value>: Set wiper; pot 0=adjustable,1=fixed or names 'adjustable','fixed'.",
+    "readvolt [channel]: Read voltage; channel 'fixed' or 'adjustable'. If no channel, shows both.",
+    "calibrate <channel>: Calibrate channel; 'fixed' or 'adjustable'.",
+    "calibrate_all: Calibrate both channels.",
+    "debugvolt [channel]: Show raw ADC count, calibration, and computed voltage.",
+    "resetcal: Reset calibration to defaults and delete calibration file.",
+]
 
-# ——— COMMAND LISTENER THREAD ———
-def command_listener():
-    """Background thread to listen for commands."""
-    global pattern
+def command_help():
+    print("Available commands:")
+    for line in help_text:
+        print(f"  {line}")
 
-    while True:
-        cmd = input("Enter command: ").strip().lower()
 
-        if cmd == "shutdown":
-            shutdown_pico()
-            break
+def command_shutdown():
+    shutdown_pico()
 
-        elif cmd.startswith("setres"):
-            parts = cmd.split()
-            if len(parts) == 3:
-                channel, pos = parts[1], parts[2]
-                try:
-                    pos = int(pos)
-                    if channel == "adjustable":
-                        ch = 0
-                    elif channel == "fixed":
-                        ch = 1
-                    else:
-                        print("Unknown channel; use 'adjustable' or 'fixed'")
-                        continue
-                    set_wiper(ch, pos)
-                except ValueError:
-                    print("Position must be an integer 0–255")
-            else:
-                print("Usage: setres <channel> <position>")
 
-        elif cmd.startswith("readvolt"):
-            parts = cmd.split()
-            if len(parts) == 2 and parts[1] in ("fixed", "adjustable"):
-                read_voltage(parts[1])
-            else:
-                print("Usage: readvolt <fixed|adjustable>")
-
-        elif cmd == "readmode":
-            read_mode()
-
-        elif cmd == "antenna":
-            read_sense()
-
-        elif cmd.startswith("setfan"):
-            parts = cmd.split()
-            if len(parts) == 2:
-                try:
-                    speed = int(parts[1])
-                    set_fan_speed(speed)
-                except ValueError:
-                    print("Speed must be an integer percentage")
-            else:
-                print("Usage: setfan <percentage>")
-
-        elif cmd.startswith("write"):
-            parts = cmd.split()
-            # expect: "write b1 b2 ... b48" → 49 total parts
-            if len(parts) == 49:
-                try:
-                    bits = [int(b) for b in parts[1:]]
-                    if all(b in (0,1) for b in bits):
-                        update_shift_registers(bits)
-                        pattern = bits[:]   # save for read
-                    else:
-                        print("All bits must be 0 or 1")
-                except ValueError:
-                    print("All bits must be integers 0 or 1")
-            else:
-                print("Usage: write <48 bits separated by spaces>")
-
-        elif cmd == "read":
-            print("Previous shift register:", pattern)
-
+def command_setres(pot, value):
+    try:
+        if pot.lower() in ('fixed', 'adjustable'):
+            p = 1 if pot.lower() == 'fixed' else 0
         else:
-            print(f"Unknown command '{cmd}'. Valid: shutdown, setres, readvolt, readmode, antenna, setfan, write, read.")
+            p = int(pot)
+        v = int(value)
+        set_wiper(p, v)
+        name = 'fixed' if p == 1 else 'adjustable'
+        print(f"Pot {p} ({name}) set to {v}")
+    except Exception as e:
+        print(f"Error: {e}")
 
-# ——— STARTUP ROUTINE ———
+
+def command_readvolt(*args):
+    try:
+        if not args:
+            for ch in ('fixed', 'adjustable'):
+                v = read_voltage(ch)
+                print(f"{ch} voltage: {v:.3f} V")
+        else:
+            ch = args[0]
+            v = read_voltage(ch)
+            print(f"{ch} voltage: {v:.3f} V")
+    except Exception as e:
+        print(f"Error: {e}")
+
+
+def command_calibrate(channel):
+    if channel not in ('fixed', 'adjustable'):
+        print("Error: channel must be 'fixed' or 'adjustable'")
+        return
+    pot = 0 if channel == 'adjustable' else 1
+    calibrate_channel(channel, pot)
+
+
+def command_calibrate_all():
+    calibrate_all()
+
+
+def command_debugvolt(*args):
+    targets = args if args else ('fixed', 'adjustable')
+    for ch in targets:
+        try:
+            raw = get_raw_count(ch)
+            slope, intercept = get_calibration(ch)
+            v = read_voltage(ch)
+            print(f"{ch} raw_count={raw}, slope={slope:.9f}, intercept={intercept:.6f}, voltage={v:.3f} V")
+        except Exception as e:
+            print(f"Error ({ch}): {e}")
+
+
+def command_resetcal():
+    reset_calibration()
+    print("Calibration reset to defaults.")
+
+
+def _register_commands():
+    commands['help'] = command_help
+    commands['shutdown'] = command_shutdown
+    commands['setres'] = command_setres
+    commands['readvolt'] = command_readvolt
+    commands['calibrate'] = command_calibrate
+    commands['calibrate_all'] = command_calibrate_all
+    commands['debugvolt'] = command_debugvolt
+    commands['resetcal'] = command_resetcal
+
+
+def command_listener():
+    while True:
+        try:
+            inp = input("> ").strip().split()
+            if not inp:
+                continue
+            cmd, *args = inp
+            if cmd in commands:
+                commands[cmd](*args)
+            else:
+                print(f"Unknown command '{cmd}'. Type 'help' for list.")
+        except Exception as e:
+            print(f"Error: {e}")
+
+
 def startup():
-    # 1) Turn all LEDs white, pause
-    for i in range(len(leds)):
-        leds[i] = [1, 1, 1]
-    update_leds()
-    time.sleep(1)
+    print("Starting system... Command listener started. Type 'help' for available commands.")
+    fixed_v = read_voltage('fixed')
+    adj_v = read_voltage('adjustable')
+    print(f"Initial voltages - Fixed: {fixed_v:.2f} V, Adjustable: {adj_v:.2f} V")
 
-    # 2) Read voltages
-    fixed_v      = read_voltage("fixed")
-    adjustable_v = read_voltage("adjustable")
-
-    # 3) Release chip-select
-    cs.value(1)
-
-    # 4) Turn LEDs off briefly
-    for i in range(len(leds)):
-        leds[i] = [0, 0, 0]
-    update_leds()
-    time.sleep(0.5)
-
-    # 5) Map adjustable voltage (3–9 V) to 7 “rainbow” steps and set LED0
-    color_options = [
-        ([1, 0, 0], 3.0),  # red
-        ([1, 1, 0], 4.0),  # yellow
-        ([0, 1, 0], 5.0),  # green
-        ([0, 1, 1], 6.0),  # cyan
-        ([0, 0, 1], 7.0),  # blue
-        ([1, 0, 1], 8.0),  # magenta
-        ([1, 1, 1], 9.0)   # white
-    ]
-    closest_bits = min(color_options, key=lambda item: abs(adjustable_v - item[1]))[0]
-
-    # 6) Write the 3-bit pattern into LED0 and update
-    leds[0] = closest_bits
-    update_leds()
-
-# ——— MAIN ———
-startup()
-_thread.start_new_thread(command_listener, ())
-
-# initialize shift-register with a test pattern
-pattern = [i % 2 for i in range(48)]
-update_shift_registers(pattern)
-
-# keep the main thread alive
-while True:
-    update_leds()
-    #time.sleep(1)
-    #print(adjustable_v)
+if __name__ == '__main__':
+    _register_commands()
+    _thread.start_new_thread(command_listener, ())
+    startup()
+    while True:
+        update_leds()
+        time.sleep(1)
