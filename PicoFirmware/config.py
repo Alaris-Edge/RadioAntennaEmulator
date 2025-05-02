@@ -74,6 +74,16 @@ leds = [
     [0, 0, 0]
 ]
 
+adjustable_led_color_options = [
+        ([1, 0, 0], 3.0),  # red
+        ([1, 1, 0], 4.0),  # yellow
+        ([0, 1, 0], 5.0),  # green
+        ([0, 1, 1], 6.0),  # cyan
+        ([0, 0, 1], 7.0),  # blue
+        ([1, 0, 1], 8.0),  # magenta
+        ([1, 1, 1], 9.0)   # white
+    ]
+
 # Original mapping order for the shift registers (47 outputs corresponding to physical pins)
 original_mapping = [3, 34, 35, 18, 1, 2, 37, 20, 38, 21, 4, 39, 22, 5, 23, 6, 40, 24, 7, 41, 25, 42, 9, 26, 43, 10, 27, 11, 44, 28, 12, 45, 29, 13, 46, 30, 14, 47, 15, 31, 48, 16, 32, 49, 17, 33, 50]
 # Note: Physical pins 8, 19, and 36 are not connected to this shift register.

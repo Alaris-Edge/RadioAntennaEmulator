@@ -14,15 +14,16 @@ def read_voltage(channel):
     channel: 'fixed' for the fixed 3.3V rail measurement,
              'adjustable' for the adjustable measurement.
     """
+    #print('HERE')
     if channel == "fixed":
         val = fixed_measure.read_u16()
         voltage = (val / 65535) * 3.3 * 3.7 # Adjust value for accurate voltage read
-        print("Fixed voltage: {:.2f} V".format(voltage))
+        #print("Fixed voltage: {:.2f} V".format(voltage))
         return voltage
     elif channel == "adjustable":
         val = adjustable_measure.read_u16()
         voltage = (val / 65535) * 3.3 * 3.7 # Adjust value for accurate voltage read
-        print("Adjustable voltage: {:.2f} V".format(voltage))
+        #print("Adjustable voltage: {:.2f} V".format(voltage))
         return voltage
     else:
         print("Invalid channel. Use 'fixed' or 'adjustable'.")
