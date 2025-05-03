@@ -32,7 +32,7 @@ SR_SRCLK = Pin(8,  Pin.OUT)
 SR_RCLK  = Pin(9,  Pin.OUT)
 SR_OUT   = Pin(10, Pin.IN)
 
-FILTER_ALPHA = 0.25  # EMA smoothing factor (0 < alpha < 1)
+FILTER_ALPHA = 0.9  # EMA smoothing factor (0 < alpha < 1)
 
 # Mode select inputs (4-bit)
 mode_pins = [Pin(n, Pin.IN) for n in (2, 3, 4, 5)]

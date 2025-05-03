@@ -173,7 +173,7 @@ def set_voltage_target(channel, target, filtered_voltages, target_voltages):
     if channel not in target_voltages:
         raise ValueError(f"Invalid channel '{channel}' for target.")
     target_voltages[channel] = target
-    filtered_voltages[channel] = target
+    #filtered_voltages[channel] = target
 
 
 def voltage_control_step(filtered_voltages, target_voltages, current_wipers, debug=False, calibrating=False):
@@ -194,4 +194,4 @@ def voltage_control_step(filtered_voltages, target_voltages, current_wipers, deb
             if new_w != current_wipers[ch]:
                 current_wipers[ch] = new_w
                 set_wiper(1 if ch == 'fixed' else 0, new_w)
-                time.sleep_ms(25)
+                #time.sleep_ms(25)
