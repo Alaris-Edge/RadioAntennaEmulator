@@ -1,10 +1,11 @@
 import time
 from config import LED_OE, LED_SRCK, LED_RCK, LED_SRCLR, LED_SER_IN, leds
+from antenna_mode import read_mode
 
 # Heat map parameters for adjustable rail
-MIN_VOLTAGE = 3.3
-MAX_VOLTAGE = 9.0
+
 HEAT_PALETTE = [
+    (0, 0, 0),  # OFF
     (0, 0, 1),  # Blue
     (0, 1, 1),  # Cyan
     (0, 1, 0),  # Green
@@ -15,21 +16,20 @@ HEAT_PALETTE = [
 ]
 
 def get_heat_map_color(voltage):
-    norm = (voltage - MIN_VOLTAGE) / (MAX_VOLTAGE - MIN_VOLTAGE)
-    #print(norm)
-    if norm <= 0:
-        return HEAT_PALETTE[0]
-    if norm >= 1:
-        return HEAT_PALETTE[-1]
-    idx = round(norm * len(HEAT_PALETTE))
-    #print(idx)
-    if idx >= len(HEAT_PALETTE):
-        idx = len(HEAT_PALETTE) - 1
+    if voltage < 3.2: idx = 0
+    elif voltage < 3.5: idx = 1
+    elif voltage < 4.5: idx = 2
+    elif voltage < 6.5: idx = 3
+    elif voltage < 6.5: idx = 4
+    elif voltage < 7.5: idx = 5
+    elif voltage < 8.5: idx = 6
+    elif voltage < 9.5: idx = 7
+
     return HEAT_PALETTE[idx]
 
 # Updated to accept filtered_voltages from main loop
 
-def update_leds(filtered_voltages=None):
+def update_leds(filtered_voltages=None,antenna_mode=None):
     '''Write current RGB bit patterns to the LED shift register, with LED0 as a heat-map.'''
     # Determine adjustable voltage for LED0: use filtered if available
     if filtered_voltages is not None and 'adjustable' in filtered_voltages:
@@ -39,8 +39,16 @@ def update_leds(filtered_voltages=None):
         from voltage_control import read_voltage
         adj_voltage = read_voltage('adjustable')
 
+    # Determine antenna mode for LED1
+    if antenna_mode is None:
+        # Fallback to raw read
+        antenna_mode = read_mode()
+
     # Update LED0 color based on adjustable voltage
     leds[0] = list(get_heat_map_color(adj_voltage))
+
+    # Update LED1 color based on antenna mode
+    leds[1] = list(HEAT_PALETTE[int(antenna_mode)])
 
     # Begin shift register cycle
     LED_OE.value(0)       # Enable outputs

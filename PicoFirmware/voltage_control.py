@@ -73,7 +73,7 @@ def set_wiper(pot, value):
     if not 0 <= value <= 255:
         raise ValueError("Value must be between 0 and 255.")
     raw_value = value
-    # raw_value = 255 - value if pot == 0 else value
+    #raw_value = 255 - value if pot == 0 else value
     cmd = 0x11 if pot == 0 else 0x12
     cs.value(0)
     spi.write(bytes((cmd, raw_value)))

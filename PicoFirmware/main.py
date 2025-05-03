@@ -57,13 +57,17 @@ CPLD Interface:
 # Voltage targets and wiper tracking
 # Initialize from config defaults
 target_voltages = DEFAULT_TARGET_VOLTAGES.copy()
-current_wipers = {'fixed': 255, 'adjustable': 255}
+current_wipers = {'fixed': 255,
+                  'adjustable': 255}
 
 # Filter settings for voltage readings
 filtered_voltages = {ch: 0.0 for ch in target_voltages}
 
 # Calibration lock flag: when True, main loop skips control updates
 calibrating = False
+
+# Current antenna mode
+antenna_mode = 0
 
 # --- Command Handlers ---
 
@@ -212,18 +216,25 @@ def command_listener():
 
 # --- Startup & Main Loop ---
 def startup():
-    time.sleep(1)
+    #time.sleep(1)
     print("System started. Type 'help' to see available commands.")
-    fixed_v = read_voltage('fixed')
-    adj_v = read_voltage('adjustable')
-    print(f"Current voltages -> Fixed: {fixed_v:.2f} V, Adjustable: {adj_v:.2f} V")
-    print(f"Target voltages  -> Fixed: {target_voltages['fixed']:.2f} V, Adjustable: {target_voltages['adjustable']:.2f} V")
+    filtered_voltages['fixed'] = read_voltage('fixed')
+    filtered_voltages['adjustable'] = read_voltage('adjustable')
+    set_wiper(0,current_wipers['adjustable'])
+    set_wiper(1,current_wipers['fixed'])
+    #print(f"Current voltages -> Fixed: {filtered_voltages['fixed']:.2f} V, Adjustable: {filtered_voltages['adjustable']:.2f} V")
+    #print(f"Target voltages  -> Fixed: {target_voltages['fixed']:.2f} V, Adjustable: {target_voltages['adjustable']:.2f} V")
+    
 
 if __name__ == '__main__':
     _register_commands()
     _thread.start_new_thread(command_listener, ())
     startup()
     while True:
-        update_leds(filtered_voltages)
-        voltage_control_step(filtered_voltages, target_voltages, current_wipers, debug_enabled, calibrating)
+        update_leds(filtered_voltages,None)
+        voltage_control_step(filtered_voltages,
+                             target_voltages,
+                             current_wipers,
+                             debug_enabled,
+                             calibrating)
         time.sleep(0.01)

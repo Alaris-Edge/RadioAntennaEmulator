@@ -90,8 +90,10 @@ def read_mode():
         int: Combined mode value from pins [bit3,bit2,bit1,bit0].
     """
     bits = [pin.value() for pin in mode_pins]
-    mode = (bits[0] << 3) | (bits[1] << 2) | (bits[2] << 1) | bits[3]
-    print(f"Current Mode bits: {bits[0]}{bits[1]}{bits[2]}{bits[3]}, Mode value: {mode}")
+    # I have repurposed the MSB for something else, let's remove it from here for now
+    #mode = (bits[0] << 3) | (bits[1] << 2) | (bits[2] << 1) | bits[3]
+    mode = (bits[1] << 2) | (bits[2] << 1) | bits[3]
+    #print(f"Current Mode bits: {bits[0]}{bits[1]}{bits[2]}{bits[3]}, Mode value: {mode}")
     return mode
 
 
