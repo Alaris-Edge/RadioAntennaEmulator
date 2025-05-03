@@ -16,10 +16,10 @@ HEAT_PALETTE = [
 ]
 
 def get_heat_map_color(voltage):
-    if voltage < 3.2: idx = 0
+    if voltage < 3.2 or voltage >= 9.5 : idx = 0
     elif voltage < 3.5: idx = 1
     elif voltage < 4.5: idx = 2
-    elif voltage < 6.5: idx = 3
+    elif voltage < 5.5: idx = 3
     elif voltage < 6.5: idx = 4
     elif voltage < 7.5: idx = 5
     elif voltage < 8.5: idx = 6
