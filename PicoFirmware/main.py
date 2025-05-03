@@ -28,19 +28,31 @@ commands = {}
 debug_enabled = False
 # debug_enabled = True
 
-# Help text for CLI
-help_text = [
-    "help: Show this help message.",
-    "shutdown: Shutdown the Pico.",
-    "setres <pot> <value>: Set wiper; pot 0=adjustable,1=fixed (or 'adjustable','fixed').",
-    "setvolt <channel> <voltage>: Set voltage target; channel 'fixed' or 'adjustable'.",
-    "readvolt [channel]: Read current and target voltage; optional channel.",
-    "calibrate <channel>: Calibrate channel; 'fixed' or 'adjustable'.",
-    "calibrate_all: Calibrate both channels.",
-    "debugvolt [channel]: Show raw count, calibration, and voltage.",
-    "debug: Toggle debug messages on/off.",
-    "resetcal: Reset calibration to defaults and delete calibration file.",
-]
+# Help text for CLI (grouped for readability)
+help_text = """
+General:
+  help             Show this help message
+  shutdown         Shutdown the Pico
+
+Potentiometer:
+  setres <pot> <value>  Set wiper; pot 0=adjustable,1=fixed (or 'adjustable','fixed')
+
+Voltage Control:
+  setvolt <ch> <V>      Set voltage target; ch='fixed' or 'adjustable'
+  readvolt [ch]         Read current and target voltage; optional channel
+
+Calibration:
+  calibrate <ch>        Calibrate channel; 'fixed' or 'adjustable'
+  calibrate_all         Calibrate both channels
+  resetcal              Reset calibration to defaults and delete file
+
+Debug:
+  debugvolt [ch]        Show raw count, calibration, and voltage
+  debug                 Toggle debug messages on/off
+
+CPLD Interface:
+  cpld_write <data>     Write 48-bit pattern to the CPLD interface (hex or binary)
+"""
 
 # Voltage targets and wiper tracking
 # Initialize from config defaults
@@ -146,7 +158,7 @@ def command_debugvolt(*args):
 def command_debug():
     global debug_enabled
     debug_enabled = not debug_enabled
-    print(f"Debug messages {'enabled' if debug_enabled else 'disabled' }.")
+    print(f"Debug messages {'enabled' if debug_enabled else 'disabled' }." )
 
 
 def command_resetcal():
@@ -154,6 +166,16 @@ def command_resetcal():
     print("Calibration reset to defaults.")
 
 # --- Command Registration ---
+def command_cpld_write(data):
+    """Write a 48-bit pattern (binary or hex) to the CPLD interface and show readback."""
+    try:
+        # Pass raw input string to update_shift_registers (supports hex or binary)
+        bits = update_shift_registers(data)
+        print("CPLD interface updated. Read-back bits:", ''.join(str(b) for b in bits))
+    except Exception as e:
+        print(f"Error: {e}")
+
+
 def _register_commands():
     commands['help'] = command_help
     commands['shutdown'] = command_shutdown
@@ -165,24 +187,33 @@ def _register_commands():
     commands['debugvolt'] = command_debugvolt
     commands['debug'] = command_debug
     commands['resetcal'] = command_resetcal
+    commands['cpld_write'] = command_cpld_write
 
 # --- CLI Listener ---
 def command_listener():
     while True:
-        inp = input("> ").strip().split()
+        try:
+            inp = input("> ").strip().split()
+        except (EOFError, KeyboardInterrupt):
+            print("Exiting command listener.")
+            break
         if not inp:
             continue
         cmd, *args = inp
         if cmd in commands:
-            commands[cmd](*args)
+            try:
+                commands[cmd](*args)
+            except TypeError as te:
+                print(f"Invalid arguments for '{cmd}': {te}")
+            except Exception as e:
+                print(f"Error executing '{cmd}': {e}")
         else:
             print(f"Unknown command '{cmd}'. Type 'help' for list.")
 
 # --- Startup & Main Loop ---
 def startup():
     time.sleep(1)
-    print("System started. Available commands:")
-    command_help()
+    print("System started. Type 'help' to see available commands.")
     fixed_v = read_voltage('fixed')
     adj_v = read_voltage('adjustable')
     print(f"Current voltages -> Fixed: {fixed_v:.2f} V, Adjustable: {adj_v:.2f} V")
