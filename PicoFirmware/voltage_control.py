@@ -9,7 +9,7 @@ import time
 import ujson as json
 import os
 
-from config import kill_pin, fan_pwm, fixed_measure, adjustable_measure, cs, spi
+from config import kill_pin, fan_pwm, fixed_measure, adjustable_measure, cs, spi, FILTER_ALPHA
 
 CALIB_FILE = 'voltage_calibration.json'
 
@@ -72,8 +72,8 @@ def set_wiper(pot, value):
         raise ValueError("Pot must be 0 or 1.")
     if not 0 <= value <= 255:
         raise ValueError("Value must be between 0 and 255.")
-    raw_value=value
-    #raw_value = 255 - value if pot == 1 else value
+    raw_value = value
+    # raw_value = 255 - value if pot == 0 else value
     cmd = 0x11 if pot == 0 else 0x12
     cs.value(0)
     spi.write(bytes((cmd, raw_value)))
@@ -165,3 +165,33 @@ def get_calibration(channel):
 
 # Load calibration on import
 load_calibration()
+
+# --- New high-level voltage control API ---
+
+def set_voltage_target(channel, target, filtered_voltages, target_voltages):
+    """Set a new target voltage and reset its filtered value."""
+    if channel not in target_voltages:
+        raise ValueError(f"Invalid channel '{channel}' for target.")
+    target_voltages[channel] = target
+    filtered_voltages[channel] = target
+
+
+def voltage_control_step(filtered_voltages, target_voltages, current_wipers, debug=False, calibrating=False):
+    """Perform one iteration of the voltage control loop: adjust wipers toward targets."""
+    # Skip automatic control during calibration
+    if calibrating:
+        return
+    for ch, tgt in target_voltages.items():
+        raw = read_voltage(ch)
+        filtered_voltages[ch] = FILTER_ALPHA * raw + (1 - FILTER_ALPHA) * filtered_voltages[ch]
+        current = filtered_voltages[ch]
+        if debug:
+            print(f"[VCTRL] {ch}: filtered={current:.3f}, target={tgt:.3f}, wiper={current_wipers[ch]}")
+        diff = current - tgt
+        if abs(diff) >= 0.009:
+            step = 1 if diff > 0 else -1
+            new_w = max(0, min(255, current_wipers[ch] + step))
+            if new_w != current_wipers[ch]:
+                current_wipers[ch] = new_w
+                set_wiper(1 if ch == 'fixed' else 0, new_w)
+                time.sleep_ms(25)
