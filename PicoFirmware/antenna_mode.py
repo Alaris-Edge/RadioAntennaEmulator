@@ -84,6 +84,10 @@ def update_shift_registers(data):
     time.sleep_us(1)
     SR_RCLK.value(0)
 
+    return readshift_registers()
+
+
+def readshift_registers():
     # Read back 48 bits
     read_data = []
     for _ in range(48):
@@ -92,9 +96,7 @@ def update_shift_registers(data):
         read_data.append(SR_OUT.value())
         SR_SRCLK.value(0)
         time.sleep_us(1)
-
     return read_data
-
 
 def read_sense():
     """
@@ -118,7 +120,7 @@ def read_mode():
     bits = [pin.value() for pin in mode_pins]
     # Combine bits 1,2,3 into a 3-bit number
     mode = (bits[1] << 2) | (bits[2] << 1) | bits[3]
-    print(f"Mode bits: {bits[1]}{bits[2]}{bits[3]}, Mode value: {mode}")
+    # print(f"Mode bits: {bits[1]}{bits[2]}{bits[3]}, Mode value: {mode}")
     return mode
 
 

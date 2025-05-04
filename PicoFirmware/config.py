@@ -5,12 +5,13 @@ Centralized hardware configuration and pin assignments for the Pico-based contro
 """
 
 from machine import Pin, PWM, ADC, SPI
-import time
-import os
 
 # --- Power Control ---
 kill_pin = Pin(22, Pin.OUT)
 kill_pin.value(0)  # 0=latched, 1=shutdown
+
+# Onboard LED
+onboard_led = Pin("LED", Pin.OUT)
 
 # --- LED Shift Register (status LEDs) ---
 LED_OE     = Pin(11, Pin.OUT)  # Output Enable (active LOW)
@@ -32,9 +33,10 @@ SR_SRCLK = Pin(8,  Pin.OUT)
 SR_RCLK  = Pin(9,  Pin.OUT)
 SR_OUT   = Pin(10, Pin.IN)
 
-FILTER_ALPHA = 0.9  # EMA smoothing factor (0 < alpha < 1)
+# EMA smoothing factor for voltage readings (0 < alpha < 1)
+FILTER_ALPHA = 0.9
 
-# Mode select inputs (4-bit)
+# Mode select inputs (3-bit)
 mode_pins = [Pin(n, Pin.IN) for n in (2, 3, 4, 5)]
 
 # Fan control (PWM)

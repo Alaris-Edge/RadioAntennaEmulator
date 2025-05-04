@@ -61,7 +61,9 @@ def reset_calibration():
 
 
 def shutdown_pico():
-    print("Shutting down... Goodbye!")
+    print("Shutting down Raspberry PI.")
+    print("Your antenna mode and voltage settings will persist.")
+    print("Goodbye!")
     fan_pwm.duty_u16(0)
     time.sleep_ms(100)
     kill_pin.value(1)

@@ -1,9 +1,19 @@
+"""
+led_control.py
+
+Controls the 4-status LEDs via a shift register:
+ - LED0 displays a heat-map of the adjustable voltage rail.
+ - LED1 displays the current antenna mode.
+ - LED2 and LED3 support manual overrides with future placeholders for auto-update.
+
+All four LEDs are written each cycle, respecting per-LED auto-update flags.
+Debug logs occur only when the `debug` parameter is True, with detailed tracing.
+"""
 import time
 from config import LED_OE, LED_SRCK, LED_RCK, LED_SRCLR, LED_SER_IN, leds
 from antenna_mode import read_mode
 
 # Heat map parameters for adjustable rail
-# Index 0 = OFF, 1–7 correspond to increasing voltage levels
 HEAT_PALETTE = [
     (0, 0, 0),  # OFF
     (0, 0, 1),  # Blue
@@ -17,11 +27,7 @@ HEAT_PALETTE = [
 
 
 def get_heat_map_color(voltage):
-    """
-    Map a voltage reading to a color in the heat palette.
-
-    Returns a tuple (R, G, B) from HEAT_PALETTE.
-    """
+    """Map a voltage to one of 8 palette colors."""
     if voltage < 3.2:
         idx = 0
     elif voltage < 3.5:
@@ -41,19 +47,22 @@ def get_heat_map_color(voltage):
     return HEAT_PALETTE[idx]
 
 
-def update_leds(filtered_voltages=None, antenna_mode=None, auto_update_led=None):
+def update_leds(filtered_voltages=None, antenna_mode=None, auto_update_led=None, debug=False):
     """
-    Write current RGB bit patterns to the LED shift register.
-    LED0 shows a heat-map of the adjustable voltage rail.
-    LED1 shows the current antenna mode.
+    Write current RGB bit patterns to the 4-LED shift register.
 
     Args:
-      filtered_voltages: dict with 'fixed' and 'adjustable' float readings.
-      antenna_mode: optional integer mode; if None, read raw.
-      auto_update_led: dict mapping LED index to bool for auto-update control.
+        filtered_voltages (dict): Optional filtered voltages for heat-map.
+        antenna_mode (int): Optional current mode for LED1.
+        auto_update_led (dict): Flags for each LED index (0–3) to enable auto-update.
+        debug (bool): If True, print debug logs.
     """
+    # Prepare auto-update flags
+    if auto_update_led is None:
+        auto_update_led = {}
+
     # Determine adjustable voltage for LED0
-    if filtered_voltages is not None and 'adjustable' in filtered_voltages:
+    if filtered_voltages and 'adjustable' in filtered_voltages:
         adj_voltage = filtered_voltages['adjustable']
     else:
         from voltage_control import read_voltage
@@ -63,40 +72,49 @@ def update_leds(filtered_voltages=None, antenna_mode=None, auto_update_led=None)
     if antenna_mode is None:
         antenna_mode = read_mode()
 
-    # Prepare auto-update default
-    auto = auto_update_led if isinstance(auto_update_led, dict) else {}
-
-    # Update LED0 (heat-map) if enabled
-    if auto.get(0, True):
+    # LED0: heat-map
+    if auto_update_led.get(0, True):
         leds[0] = list(get_heat_map_color(adj_voltage))
 
-    # Update LED1 (antenna mode) if enabled
+    # LED1: mode indicator
     try:
         mode_idx = int(antenna_mode)
-    except Exception:
+    except:
         mode_idx = 0
     if mode_idx < 0 or mode_idx >= len(HEAT_PALETTE):
         mode_idx = 0
-    if auto.get(1, True):
+    if auto_update_led.get(1, True):
         leds[1] = list(HEAT_PALETTE[mode_idx])
 
-    # LEDs 2 and 3 remain as set in leds array (manual or previous auto state)
+    # LED2: placeholder for future automatic updates (manual overrides persist)
+    if auto_update_led.get(2, True):
+        pass  # TODO: add auto logic for LED2
 
-    # Begin shift register cycle
-    LED_OE.value(0)       # Enable outputs (active LOW)
-    LED_SRCLR.value(1)    # Normal operation (not clearing)
-    LED_RCK.value(0)      # Prepare to latch new data
+    # LED3: placeholder for future automatic updates (manual overrides persist)
+    if auto_update_led.get(3, True):
+        pass  # TODO: add auto logic for LED3
 
-    # Shift out bits for all LEDs: reverse bit order within each [R, G, B]
-    for led in leds:
-        for bit in reversed(led):
+    # Debug logs
+    if debug:
+        print("DEBUG update_leds: leds=", leds)
+
+    # Begin shift register write
+    LED_OE.value(0)
+    LED_SRCLR.value(1)
+    LED_RCK.value(0)
+
+    # Shift out bits: each LED is [R, G, B], send reversed (B, G, R)
+    for led_idx, led in enumerate(leds):
+        for bit_idx, bit in enumerate(reversed(led)):
+            if debug:
+                print(f"LED{led_idx} bit{bit_idx} -> {bit}")
             LED_SER_IN.value(bit)
             LED_SRCK.value(1)
             time.sleep_us(100)
             LED_SRCK.value(0)
             time.sleep_us(100)
 
-    # Latch shifted data to outputs
+    # Latch data
     LED_RCK.value(1)
     time.sleep_us(100)
     LED_RCK.value(0)
