@@ -6,6 +6,7 @@ Entry point: startup sequence, CLI command listener, LED update loop, and voltag
 
 import _thread
 import time
+from machine import Pin
 
 from config import *
 from antenna_mode import update_shift_registers, read_mode
@@ -22,6 +23,9 @@ from voltage_control import (
     get_calibration,
     reset_calibration,
 )
+
+# Onboard LED (GP25)
+onboard_led = Pin(25, Pin.OUT)
 
 # Command registry and debug flag
 commands = {}
@@ -56,7 +60,6 @@ LED Control:
 """
 
 # Voltage targets and wiper tracking
-# Initialize from config defaults
 target_voltages = DEFAULT_TARGET_VOLTAGES.copy()
 current_wipers = {'fixed': 255, 'adjustable': 255}
 
@@ -244,15 +247,6 @@ def command_listener():
         else:
             print(f"Unknown command '{cmd}'. Type 'help'.")
 
-# --- Startup ---
-
-def startup():
-    print("System started. Type 'help' to see available commands.")
-    filtered_voltages['fixed'] = read_voltage('fixed')
-    filtered_voltages['adjustable'] = read_voltage('adjustable')
-    set_wiper(0, current_wipers['adjustable'])
-    set_wiper(1, current_wipers['fixed'])
-
 # --- Periodic Tasks ---
 
 def led_loop():
@@ -261,7 +255,7 @@ def led_loop():
             mode = read_mode()
             update_leds(filtered_voltages, mode, auto_update_led)
         except Exception as e:
-            print("LED loop error:", e)
+            print(f"Error in LED loop: {e}")
         time.sleep(0.25)
 
 
@@ -277,9 +271,19 @@ def voltage_loop():
                 auto_control
             )
         except Exception as e:
-            print("Voltage loop error:", e)
+            print(f"Error in voltage loop: {e}")
         time.sleep(0)
         time.sleep(0.01)
+
+# --- Startup and Main ---
+
+def startup():
+    print("System started. Type 'help' to see available commands.")
+    filtered_voltages['fixed'] = read_voltage('fixed')
+    filtered_voltages['adjustable'] = read_voltage('adjustable')
+    set_wiper(0, current_wipers['adjustable'])
+    set_wiper(1, current_wipers['fixed'])
+
 
 if __name__ == '__main__':
     _register_commands()
@@ -288,4 +292,5 @@ if __name__ == '__main__':
     _thread.start_new_thread(voltage_loop, ())
     startup()
     while True:
+        onboard_led.value(not onboard_led.value())
         time.sleep(1)
