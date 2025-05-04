@@ -68,7 +68,8 @@ calibrating = False
 # --- Command Handlers ---
 
 def command_help():
-    print(help_text)
+    # Print help without leading blank line
+    print(help_text.lstrip('\n'))
 
 
 def command_shutdown():
