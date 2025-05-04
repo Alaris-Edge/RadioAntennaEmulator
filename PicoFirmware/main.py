@@ -8,7 +8,7 @@ import _thread
 import time
 
 from config import *
-from antenna_mode import update_shift_registers, read_sense, read_mode, set_fan_speed
+from antenna_mode import update_shift_registers
 from led_control import update_leds
 from voltage_control import (
     read_voltage,
@@ -26,7 +26,6 @@ from voltage_control import (
 # Command registry and debug flag
 commands = {}
 debug_enabled = False
-# debug_enabled = True
 
 # Help text for CLI (grouped for readability)
 help_text = """
@@ -62,15 +61,16 @@ current_wipers = {'fixed': 255, 'adjustable': 255}
 # Filter settings for voltage readings
 filtered_voltages = {ch: 0.0 for ch in target_voltages}
 
-# Calibration lock flag: when True, main loop skips control updates
+# Auto-control flags (reset on restart)
 auto_control = {ch: True for ch in target_voltages}
+
+# Calibration lock flag: when True, main loop skips control updates
 calibrating = False
 
 # --- Command Handlers ---
 
 def command_help():
-    # Print help without leading blank line
-    print(help_text.lstrip('\n'))
+    print(help_text.strip('\n'))
 
 
 def command_shutdown():
@@ -85,12 +85,12 @@ def command_setres(pot, value):
         else:
             p = int(pot)
             key = 'fixed' if p == 1 else 'adjustable'
+        # Disable automatic control for manual pot adjustment
+        auto_control[key] = False
         v = int(value)
         set_wiper(p, v)
         current_wipers[key] = v
         print(f"Pot {p} ({key}) set to {v}")
-        # Disable automatic control for manual pot adjustment
-        auto_control[key] = False
     except Exception as e:
         print(f"Error: {e}")
 
@@ -103,9 +103,9 @@ def command_setvolt(channel, voltage):
             return
         target = float(voltage)
         set_voltage_target(ch, target, filtered_voltages, target_voltages)
-        print(f"{ch} target set to {target:.3f} V")
         # Re-enable automatic control for this channel
         auto_control[ch] = True
+        print(f"{ch} target set to {target:.3f} V")
     except Exception as e:
         print(f"Error: {e}")
 
@@ -162,7 +162,7 @@ def command_debugvolt(*args):
 def command_debug():
     global debug_enabled
     debug_enabled = not debug_enabled
-    print(f"Debug messages {'enabled' if debug_enabled else 'disabled' }.")
+    print(f"Debug messages {'enabled' if debug_enabled else 'disabled'}.")
 
 
 def command_resetcal():
@@ -223,7 +223,6 @@ def startup():
     set_wiper(0, current_wipers['adjustable'])
     set_wiper(1, current_wipers['fixed'])
 
-
 # --- Periodic Tasks ---
 
 def led_loop():
@@ -243,6 +242,7 @@ def voltage_loop():
             voltage_control_step(filtered_voltages, target_voltages, current_wipers, debug_enabled, calibrating, auto_control)
         except Exception as e:
             print(f"Voltage task error: {e}")
+        time.sleep(0)
         time.sleep(0.01)
 
 
