@@ -57,8 +57,7 @@ CPLD Interface:
 # Voltage targets and wiper tracking
 # Initialize from config defaults
 target_voltages = DEFAULT_TARGET_VOLTAGES.copy()
-current_wipers = {'fixed': 255,
-                  'adjustable': 255}
+current_wipers = {'fixed': 255, 'adjustable': 255}
 
 # Filter settings for voltage readings
 filtered_voltages = {ch: 0.0 for ch in target_voltages}
@@ -66,15 +65,10 @@ filtered_voltages = {ch: 0.0 for ch in target_voltages}
 # Calibration lock flag: when True, main loop skips control updates
 calibrating = False
 
-# Current antenna mode
-antenna_mode = 0
-
 # --- Command Handlers ---
 
 def command_help():
-    print("Available commands:")
-    for line in help_text:
-        print(f"  {line}")
+    print(help_text)
 
 
 def command_shutdown():
@@ -114,12 +108,12 @@ def command_readvolt(*args):
     try:
         keys = [args[0].lower()] if args else list(target_voltages.keys())
         for ch in keys:
-            if ch in target_voltages:
-                v = read_voltage(ch)
-                tgt = target_voltages[ch]
-                print(f"{ch} voltage: {v:.3f} V (target: {tgt:.2f} V)")
-            else:
+            if ch not in target_voltages:
                 print(f"Unknown channel '{ch}'")
+                continue
+            v = read_voltage(ch)
+            tgt = target_voltages[ch]
+            print(f"{ch} voltage: {v:.3f} V (target: {tgt:.2f} V)")
     except Exception as e:
         print(f"Error: {e}")
 
@@ -150,35 +144,34 @@ def command_calibrate_all():
 def command_debugvolt(*args):
     keys = [args[0].lower()] if args else list(target_voltages.keys())
     for ch in keys:
-        if ch in target_voltages:
-            raw = get_raw_count(ch)
-            slope, intercept = get_calibration(ch)
-            v = read_voltage(ch)
-            print(f"{ch} raw_count={raw}, slope={slope:.9f}, intercept={intercept:.6f}, voltage={v:.3f} V")
-        else:
+        if ch not in target_voltages:
             print(f"Unknown channel '{ch}'")
+            continue
+        raw = get_raw_count(ch)
+        slope, intercept = get_calibration(ch)
+        v = read_voltage(ch)
+        print(f"{ch} raw_count={raw}, slope={slope:.9f}, intercept={intercept:.6f}, voltage={v:.3f} V")
 
 
 def command_debug():
     global debug_enabled
     debug_enabled = not debug_enabled
-    print(f"Debug messages {'enabled' if debug_enabled else 'disabled' }." )
+    print(f"Debug messages {'enabled' if debug_enabled else 'disabled'}.")
 
 
 def command_resetcal():
     reset_calibration()
     print("Calibration reset to defaults.")
 
-# --- Command Registration ---
+
 def command_cpld_write(data):
-    """Write a 48-bit pattern (binary or hex) to the CPLD interface and show readback."""
     try:
-        # Pass raw input string to update_shift_registers (supports hex or binary)
         bits = update_shift_registers(data)
         print("CPLD interface updated. Read-back bits:", ''.join(str(b) for b in bits))
     except Exception as e:
         print(f"Error: {e}")
 
+# --- Command Registration ---
 
 def _register_commands():
     commands['help'] = command_help
@@ -194,6 +187,7 @@ def _register_commands():
     commands['cpld_write'] = command_cpld_write
 
 # --- CLI Listener ---
+
 def command_listener():
     while True:
         try:
@@ -212,29 +206,22 @@ def command_listener():
             except Exception as e:
                 print(f"Error executing '{cmd}': {e}")
         else:
-            print(f"Unknown command '{cmd}'. Type 'help' for list.")
+            print(f"Unknown command '{cmd}'. Type 'help'.")
 
 # --- Startup & Main Loop ---
+
 def startup():
-    #time.sleep(1)
     print("System started. Type 'help' to see available commands.")
     filtered_voltages['fixed'] = read_voltage('fixed')
     filtered_voltages['adjustable'] = read_voltage('adjustable')
-    set_wiper(0,current_wipers['adjustable'])
-    set_wiper(1,current_wipers['fixed'])
-    #print(f"Current voltages -> Fixed: {filtered_voltages['fixed']:.2f} V, Adjustable: {filtered_voltages['adjustable']:.2f} V")
-    #print(f"Target voltages  -> Fixed: {target_voltages['fixed']:.2f} V, Adjustable: {target_voltages['adjustable']:.2f} V")
-    
+    set_wiper(0, current_wipers['adjustable'])
+    set_wiper(1, current_wipers['fixed'])
 
 if __name__ == '__main__':
     _register_commands()
     _thread.start_new_thread(command_listener, ())
     startup()
     while True:
-        update_leds(filtered_voltages,None)
-        voltage_control_step(filtered_voltages,
-                             target_voltages,
-                             current_wipers,
-                             debug_enabled,
-                             calibrating)
+        update_leds(filtered_voltages)
+        voltage_control_step(filtered_voltages, target_voltages, current_wipers, debug_enabled, calibrating)
         time.sleep(0.01)
