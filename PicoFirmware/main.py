@@ -1,19 +1,23 @@
 """
 main.py
 
-Entry point: startup sequence, CLI command listener, voltage target control, and LED update loop.
+Entry point: startup sequence, CLI command listener, scheduled LED and voltage control loops,
+manual and automatic control for potentiometers and LEDs, and onboard LED toggle.
 """
 
 import _thread
 import time
+from machine import Pin
 
 from config import *
-from antenna_mode import update_shift_registers, read_sense, read_mode, set_fan_speed
+from antenna_mode import update_shift_registers, read_mode
 from led_control import update_leds
 from voltage_control import (
     read_voltage,
     shutdown_pico,
     set_wiper,
+    set_voltage_target,
+    voltage_control_step,
     calibrate_channel,
     calibrate_all,
     get_raw_count,
@@ -24,35 +28,71 @@ from voltage_control import (
 # Command registry and debug flag
 commands = {}
 debug_enabled = False
-#debug_enabled = True
 
 # Help text for CLI
-help_text = [
-    "help: Show this help message.",
-    "shutdown: Shutdown the Pico.",
-    "setres <pot> <value>: Set wiper; pot 0=adjustable,1=fixed (or 'adjustable','fixed').",
-    "setvolt <channel> <voltage>: Set voltage target; channel 'fixed' or 'adjustable'.",
-    "readvolt [channel]: Read current and target voltage; optional channel.",
-    "calibrate <channel>: Calibrate channel; 'fixed' or 'adjustable'.",
-    "calibrate_all: Calibrate both channels.",
-    "debugvolt [channel]: Show raw count, calibration, and voltage.",
-    "debug: Toggle debug messages on/off.",
-    "resetcal: Reset calibration to defaults and delete calibration file.",
-]
+help_text = """
+General:
+  help                     Show this help message
+     Example: help
+  shutdown                 Shutdown the Pico (LED, voltage, CPLD states remain as-is after power-down)
+     Example: shutdown
+
+Voltage Control and Potentiometer:
+  setres <pot> <value>     Set wiper; pot 0=adjustable,1=fixed
+     Examples: setres adjustable 128, setres 1 200
+  setvolt <ch> <V>         Set voltage target; ch='fixed' or 'adjustable'
+     Example: setvolt fixed 3.3
+  readvolt [ch]            Read current and target voltage; optional channel
+     Examples: readvolt, readvolt adjustable
+
+Calibration:
+  calibrate <ch>           Calibrate channel; 'fixed' or 'adjustable'
+     Example: calibrate fixed
+  calibrate_all            Calibrate both channels
+     Example: calibrate_all
+  resetcal                 Reset calibration to defaults
+     Example: resetcal
+
+Debug:
+  debugvolt [ch]           Show raw count, calibration, and voltage
+     Example: debugvolt adjustable
+  debug                    Toggle debug messages on/off
+     Example: debug
+
+CPLD Interface:
+  cpld_write <data>        Write 48-bit pattern to the CPLD interface
+     Examples: cpld_write 0x123456789ABC, cpld_write 101010... (48 bits)
+
+LED Control:
+  setled <idx> <rgb>       Set LED idx (0-3) with contiguous RGB bits
+     Example: setled 2 010
+  setled <idx> auto        Re-enable automatic update for LED idx
+     Example: setled 2 auto
+"""
 
 # Voltage targets and wiper tracking
-target_voltages = {'fixed': 3.3, 'adjustable': 5.0}
+target_voltages = DEFAULT_TARGET_VOLTAGES.copy()
 current_wipers = {'fixed': 255, 'adjustable': 255}
+
+# Filtered voltage readings
+filtered_voltages = {ch: 0.0 for ch in target_voltages}
+
+# Calibration lock flag
+calibrating = False
+
+# Auto-control flags for voltage channels and LEDs
+auto_control = {ch: True for ch in target_voltages}
+auto_update_led = {i: True for i in range(4)}
 
 # --- Command Handlers ---
 
 def command_help():
-    print("Available commands:")
-    for line in help_text:
-        print(f"  {line}")
+    print(help_text.lstrip("\n"))
 
 
 def command_shutdown():
+    leds[3] = [1, 0, 0]
+    update_leds(filtered_voltages, mode, auto_update_led, debug = debug_enabled)
     shutdown_pico()
 
 
@@ -67,6 +107,7 @@ def command_setres(pot, value):
         v = int(value)
         set_wiper(p, v)
         current_wipers[key] = v
+        auto_control[key] = False
         print(f"Pot {p} ({key}) set to {v}")
     except Exception as e:
         print(f"Error: {e}")
@@ -79,27 +120,9 @@ def command_setvolt(channel, voltage):
             print("Error: channel must be 'fixed' or 'adjustable'.")
             return
         target = float(voltage)
-        slope, intercept = get_calibration(ch)
-        raw_min, raw_max = 0, 65535
-        if slope == 0:
-            print(f"Error: invalid calibration slope={slope}")
-            return
-        # Compute raw ADC count target
-        raw_target = (target - intercept) / slope
-        # Clamp raw_target within calibrated bounds
-        raw_target = max(raw_min, min(raw_max, raw_target))
-        # Map raw_target to wiper value
-        if ch == 'adjustable':
-            # inverted mapping
-            wiper_guess = int((raw_max - raw_target) * 255 / (raw_max - raw_min))
-        else:
-            wiper_guess = int((raw_target - raw_min) * 255 / (raw_max - raw_min))
-        wiper_guess = max(0, min(255, wiper_guess))
-        p = 1 if ch == 'fixed' else 0
-        #set_wiper(p, wiper_guess)
-        #current_wipers[ch] = wiper_guess
-        target_voltages[ch] = target
-        print(f"{ch} target set to {target:.3f} V, initial wiper {wiper_guess}")
+        set_voltage_target(ch, target, filtered_voltages, target_voltages)
+        auto_control[ch] = True
+        print(f"{ch} target set to {target:.3f} V")
     except Exception as e:
         print(f"Error: {e}")
 
@@ -108,40 +131,49 @@ def command_readvolt(*args):
     try:
         keys = [args[0].lower()] if args else list(target_voltages.keys())
         for ch in keys:
-            if ch in target_voltages:
-                v = read_voltage(ch)
-                tgt = target_voltages[ch]
-                print(f"{ch} voltage: {v:.3f} V (target: {tgt:.2f} V)")
-            else:
+            if ch not in target_voltages:
                 print(f"Unknown channel '{ch}'")
+                continue
+            v = read_voltage(ch)
+            tgt = target_voltages[ch]
+            print(f"{ch} voltage: {v:.3f} V (target: {tgt:.2f} V)")
     except Exception as e:
         print(f"Error: {e}")
 
 
 def command_calibrate(channel):
+    global calibrating
     ch = channel.lower()
     if ch not in target_voltages:
         print("Error: channel must be 'fixed' or 'adjustable'.")
         return
     pot = 0 if ch == 'adjustable' else 1
-    calibrate_channel(ch, pot)
+    calibrating = True
+    try:
+        calibrate_channel(ch, pot)
+    finally:
+        calibrating = False
 
 
 def command_calibrate_all():
-    calibrate_all()
+    global calibrating
+    calibrating = True
+    try:
+        calibrate_all()
+    finally:
+        calibrating = False
 
 
 def command_debugvolt(*args):
     keys = [args[0].lower()] if args else list(target_voltages.keys())
     for ch in keys:
-        if ch in target_voltages:
-            raw = get_raw_count(ch)
-            slope, intercept = get_calibration(ch)
-            raw_min, raw_max = 0, 65535
-            v = read_voltage(ch)
-            print(f"{ch} raw_count={raw}, slope={slope:.9f}, intercept={intercept:.6f}, voltage={v:.3f} V")
-        else:
+        if ch not in target_voltages:
             print(f"Unknown channel '{ch}'")
+            continue
+        raw = get_raw_count(ch)
+        slope, intercept = get_calibration(ch)
+        v = read_voltage(ch)
+        print(f"{ch} raw_count={raw}, slope={slope:.9f}, intercept={intercept:.6f}, voltage={v:.3f} V")
 
 
 def command_debug():
@@ -154,6 +186,48 @@ def command_resetcal():
     reset_calibration()
     print("Calibration reset to defaults.")
 
+
+def command_cpld_write(data):
+    try:
+        bits = update_shift_registers(data)
+        print("CPLD interface updated. Read-back bits:", ''.join(str(b) for b in bits))
+    except Exception as e:
+        print(f"Error: {e}")
+
+
+def command_setled(idx, *args):
+    try:
+        i = int(idx)
+        if i not in auto_update_led:
+            print("Error: LED index must be 0-3.")
+            return
+        # Re-enable auto-update
+        if len(args) == 1 and args[0].lower() == 'auto':
+            auto_update_led[i] = True
+            print(f"LED {i} auto-update re-enabled.")
+            return
+        # Contiguous RGB bits input
+        if len(args) == 1 and len(args[0]) == 3 and all(c in '01' for c in args[0]):
+            r, g, b = (int(c) for c in args[0])
+            leds[i] = [r, g, b]
+            auto_update_led[i] = False
+            print(f"LED {i} manually set to [{r}, {g}, {b}].")
+            return
+        # Separate RGB inputs
+        if len(args) == 3:
+            r, g, b = map(int, args)
+            for bit in (r, g, b):
+                if bit not in (0, 1):
+                    raise ValueError
+            leds[i] = [r, g, b]
+            auto_update_led[i] = False
+            print(f"LED {i} manually set to [{r}, {g}, {b}].")
+            return
+        print("Usage: setled <idx> <rgb> or setled <idx> auto")
+    except ValueError:
+        print("Error: r, g, b must be 0 or 1.")
+    except Exception as e:
+        print(f"Error: {e}")
 # --- Command Registration ---
 
 def _register_commands():
@@ -167,52 +241,84 @@ def _register_commands():
     commands['debugvolt'] = command_debugvolt
     commands['debug'] = command_debug
     commands['resetcal'] = command_resetcal
+    commands['cpld_write'] = command_cpld_write
+    commands['setled'] = command_setled
 
 # --- CLI Listener ---
 
 def command_listener():
     while True:
-        inp = input("> ").strip().split()
+        try:
+            inp = input("> ").strip().split()
+        except (EOFError, KeyboardInterrupt):
+            print("Exiting command listener.")
+            break
         if not inp:
             continue
         cmd, *args = inp
         if cmd in commands:
-            commands[cmd](*args)
+            try:
+                commands[cmd](*args)
+            except TypeError as te:
+                print(f"Invalid arguments for '{cmd}': {te}")
+            except Exception as e:
+                print(f"Error executing '{cmd}': {e}")
         else:
-            print(f"Unknown command '{cmd}'. Type 'help' for list.")
+            print(f"Unknown command '{cmd}'. Type 'help'.")
 
-# --- Startup & Main Loop ---
-
-def startup():
-    #set_wiper(0,255)
-    #set_wiper(1,255)
-    time.sleep(1)
-    print("Starting system... Command listener started. Type 'help' for available commands.")
-    fixed_v = read_voltage('fixed')
-    adj_v = read_voltage('adjustable')
-    print(f"Current voltages -> Fixed: {fixed_v:.2f} V, Adjustable: {adj_v:.2f} V")
-    print(f"Target voltages  -> Fixed: {target_voltages['fixed']:.2f} V, Adjustable: {target_voltages['adjustable']:.2f} V")
+# --- Thread Setup & Startup ---
 
 if __name__ == '__main__':
     _register_commands()
+    # Start CLI on core1
     _thread.start_new_thread(command_listener, ())
-    startup()
+    # Initialize system
+    print("System started. Type 'help' to see available commands.")
+    filtered_voltages['fixed'] = read_voltage('fixed')
+    filtered_voltages['adjustable'] = read_voltage('adjustable')
+    set_wiper(0, current_wipers['adjustable'])
+    set_wiper(1, current_wipers['fixed'])
+
+    # Scheduled loops on core0
+    LED_INTERVAL_MS = 250
+    VOLT_INTERVAL_MS = 10
+    TOGGLE_INTERVAL_MS = 1000
+    last_led = time.ticks_ms()
+    last_volt = time.ticks_ms()
+    last_toggle = time.ticks_ms()
+
     while True:
-        update_leds()
-        for ch, tgt in target_voltages.items():
-            if tgt is None:
-                continue
-            current = read_voltage(ch)
-            if debug_enabled:
-                print(f"[DEBUG] {ch}: current={current:.3f} V, target={tgt:.3f} V, wiper={current_wipers[ch]}")
-            diff = current - tgt
-            if abs(diff) >= 0.025:
-                step = 1 if diff > 0 else -1
-                new_w = max(0, min(255, current_wipers[ch] + step))
+        now = time.ticks_ms()
+        
+        # Onboard LED toggle every second
+        if time.ticks_diff(now, last_toggle) >= TOGGLE_INTERVAL_MS:
+            onboard_led.value(not onboard_led.value())
+            # Onboard LED not working, let's use one of the other ones
+            leds[3] = [0, not(leds[3][1]), 0]
+            last_toggle = now
+
+
+        # LED update at 4 Hz
+        if time.ticks_diff(now, last_led) >= LED_INTERVAL_MS:
+            try:
                 if debug_enabled:
-                    print(f"[DEBUG] {ch}: diff={diff:.3f}, step={step}, new_wiper={new_w}")
-                if new_w != current_wipers[ch]:
-                    current_wipers[ch] = new_w
-                set_wiper(1 if ch == 'fixed' else 0, new_w)
-        #time.sleep(0.001)
-        #time.sleep(0)
+                    print("DEBUG: Reading antenna mode.")
+                mode = read_mode()
+                if debug_enabled:
+                    print("DEBUG: Updating LEDs.")
+                update_leds(filtered_voltages, mode, auto_update_led, debug = debug_enabled)
+            except Exception as e:
+                print(f"Error in LED loop: {e}")
+            last_led = now
+
+        # Voltage control at ~100 Hz
+        # This block runs most often. I have moved it here so as not to bblock the slower periodic functions
+        if time.ticks_diff(now, last_volt) >= VOLT_INTERVAL_MS:
+            try:
+                voltage_control_step(filtered_voltages, target_voltages, current_wipers, debug_enabled, calibrating, auto_control)
+            except Exception as e:
+                print(f"Error in voltage loop: {e}")
+            last_volt = now
+
+        # Yield to other tasks
+        time.sleep(0)
