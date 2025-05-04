@@ -41,7 +41,7 @@ def get_heat_map_color(voltage):
     return HEAT_PALETTE[idx]
 
 
-def update_leds(filtered_voltages=None, antenna_mode=None):
+def update_leds(filtered_voltages=None, antenna_mode=None, auto_update_led=None):
     """
     Write current RGB bit patterns to the LED shift register.
     LED0 shows a heat-map of the adjustable voltage rail.
@@ -50,6 +50,7 @@ def update_leds(filtered_voltages=None, antenna_mode=None):
     Args:
       filtered_voltages: dict with 'fixed' and 'adjustable' float readings.
       antenna_mode: optional integer mode; if None, read raw.
+      auto_update_led: dict mapping LED index to bool for auto-update control.
     """
     # Determine adjustable voltage for LED0
     if filtered_voltages is not None and 'adjustable' in filtered_voltages:
@@ -62,17 +63,24 @@ def update_leds(filtered_voltages=None, antenna_mode=None):
     if antenna_mode is None:
         antenna_mode = read_mode()
 
-    # Update LED0 (heat-map)
-    leds[0] = list(get_heat_map_color(adj_voltage))
+    # Prepare auto-update default
+    auto = auto_update_led if isinstance(auto_update_led, dict) else {}
 
-    # Update LED1 (antenna mode)
+    # Update LED0 (heat-map) if enabled
+    if auto.get(0, True):
+        leds[0] = list(get_heat_map_color(adj_voltage))
+
+    # Update LED1 (antenna mode) if enabled
     try:
         mode_idx = int(antenna_mode)
     except Exception:
         mode_idx = 0
     if mode_idx < 0 or mode_idx >= len(HEAT_PALETTE):
         mode_idx = 0
-    leds[1] = list(HEAT_PALETTE[mode_idx])
+    if auto.get(1, True):
+        leds[1] = list(HEAT_PALETTE[mode_idx])
+
+    # LEDs 2 and 3 remain as set in leds array (manual or previous auto state)
 
     # Begin shift register cycle
     LED_OE.value(0)       # Enable outputs (active LOW)

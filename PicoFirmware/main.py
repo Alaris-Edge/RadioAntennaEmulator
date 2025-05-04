@@ -8,7 +8,7 @@ import _thread
 import time
 
 from config import *
-from antenna_mode import update_shift_registers
+from antenna_mode import update_shift_registers, read_mode
 from led_control import update_leds
 from voltage_control import (
     read_voltage,
@@ -33,10 +33,8 @@ General:
   help             Show this help message
   shutdown         Shutdown the Pico
 
-Potentiometer:
+Voltage Control and Potentiometer:
   setres <pot> <value>  Set wiper; pot 0=adjustable,1=fixed (or 'adjustable','fixed')
-
-Voltage Control:
   setvolt <ch> <V>      Set voltage target; ch='fixed' or 'adjustable'
   readvolt [ch]         Read current and target voltage; optional channel
 
@@ -51,6 +49,10 @@ Debug:
 
 CPLD Interface:
   cpld_write <data>     Write 48-bit pattern to the CPLD interface (hex or binary)
+
+LED Control:
+  setled <idx> <r> <g> <b>  Manually set LED idx (0-3) RGB bits (0 or 1) and disable auto
+  setled <idx> auto        Re-enable automatic update for LED idx
 """
 
 # Voltage targets and wiper tracking
@@ -61,16 +63,18 @@ current_wipers = {'fixed': 255, 'adjustable': 255}
 # Filter settings for voltage readings
 filtered_voltages = {ch: 0.0 for ch in target_voltages}
 
-# Auto-control flags (reset on restart)
-auto_control = {ch: True for ch in target_voltages}
-
 # Calibration lock flag: when True, main loop skips control updates
 calibrating = False
+
+# Automatic voltage control flags per channel
+auto_control = {ch: True for ch in target_voltages}
+# Automatic LED update flags per LED index
+auto_update_led = {i: True for i in range(4)}
 
 # --- Command Handlers ---
 
 def command_help():
-    print(help_text.strip('\n'))
+    print(help_text.lstrip("\n"))
 
 
 def command_shutdown():
@@ -85,13 +89,10 @@ def command_setres(pot, value):
         else:
             p = int(pot)
             key = 'fixed' if p == 1 else 'adjustable'
-        # Disable automatic control for manual pot adjustment
-        auto_control[key] = False
-        # Sleep for 50ms to let the pending SPI writes settle and ensure all threads depending on auto_control get the update
-        time.sleep_ms(50)
         v = int(value)
         set_wiper(p, v)
         current_wipers[key] = v
+        auto_control[key] = False
         print(f"Pot {p} ({key}) set to {v}")
     except Exception as e:
         print(f"Error: {e}")
@@ -105,7 +106,6 @@ def command_setvolt(channel, voltage):
             return
         target = float(voltage)
         set_voltage_target(ch, target, filtered_voltages, target_voltages)
-        # Re-enable automatic control for this channel
         auto_control[ch] = True
         print(f"{ch} target set to {target:.3f} V")
     except Exception as e:
@@ -179,6 +179,33 @@ def command_cpld_write(data):
     except Exception as e:
         print(f"Error: {e}")
 
+
+def command_setled(idx, *args):
+    try:
+        i = int(idx)
+        if i not in auto_update_led:
+            print("Error: LED index must be 0-3.")
+            return
+        if len(args) == 1 and args[0].lower() == 'auto':
+            auto_update_led[i] = True
+            print(f"LED {i} auto-update re-enabled.")
+            return
+        if len(args) != 3:
+            print("Usage: setled <idx> <r> <g> <b> or setled <idx> auto")
+            return
+        r, g, b = map(int, args)
+        for bit in (r, g, b):
+            if bit not in (0, 1):
+                raise ValueError
+        from config import leds
+        leds[i] = [r, g, b]
+        auto_update_led[i] = False
+        print(f"LED {i} manually set to [{r}, {g}, {b}].")
+    except ValueError:
+        print("Error: r, g, b must be 0 or 1.")
+    except Exception as e:
+        print(f"Error: {e}")
+
 # --- Command Registration ---
 
 def _register_commands():
@@ -193,6 +220,7 @@ def _register_commands():
     commands['debug'] = command_debug
     commands['resetcal'] = command_resetcal
     commands['cpld_write'] = command_cpld_write
+    commands['setled'] = command_setled
 
 # --- CLI Listener ---
 
@@ -228,35 +256,36 @@ def startup():
 # --- Periodic Tasks ---
 
 def led_loop():
-    """Call update_leds at 4 Hz."""
     while True:
         try:
-            update_leds(filtered_voltages)
+            mode = read_mode()
+            update_leds(filtered_voltages, mode, auto_update_led)
         except Exception as e:
-            print(f"LED task error: {e}")
+            print("LED loop error:", e)
         time.sleep(0.25)
 
 
 def voltage_loop():
-    """Call voltage_control_step at ~100 Hz."""
     while True:
         try:
-            voltage_control_step(filtered_voltages, target_voltages, current_wipers, debug_enabled, calibrating, auto_control)
+            voltage_control_step(
+                filtered_voltages,
+                target_voltages,
+                current_wipers,
+                debug_enabled,
+                calibrating,
+                auto_control
+            )
         except Exception as e:
-            print(f"Voltage task error: {e}")
+            print("Voltage loop error:", e)
         time.sleep(0)
         time.sleep(0.01)
 
-
 if __name__ == '__main__':
     _register_commands()
-    # Start CLI listener
     _thread.start_new_thread(command_listener, ())
-    # Start periodic tasks
     _thread.start_new_thread(led_loop, ())
     _thread.start_new_thread(voltage_loop, ())
-    # Initialization
     startup()
-    # Keep the main thread alive
     while True:
         time.sleep(1)
