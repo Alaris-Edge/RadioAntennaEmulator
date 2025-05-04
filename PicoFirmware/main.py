@@ -63,6 +63,7 @@ current_wipers = {'fixed': 255, 'adjustable': 255}
 filtered_voltages = {ch: 0.0 for ch in target_voltages}
 
 # Calibration lock flag: when True, main loop skips control updates
+auto_control = {ch: True for ch in target_voltages}
 calibrating = False
 
 # --- Command Handlers ---
@@ -88,6 +89,8 @@ def command_setres(pot, value):
         set_wiper(p, v)
         current_wipers[key] = v
         print(f"Pot {p} ({key}) set to {v}")
+        # Disable automatic control for manual pot adjustment
+        auto_control[key] = False
     except Exception as e:
         print(f"Error: {e}")
 
@@ -101,6 +104,8 @@ def command_setvolt(channel, voltage):
         target = float(voltage)
         set_voltage_target(ch, target, filtered_voltages, target_voltages)
         print(f"{ch} target set to {target:.3f} V")
+        # Re-enable automatic control for this channel
+        auto_control[ch] = True
     except Exception as e:
         print(f"Error: {e}")
 
@@ -235,7 +240,7 @@ def voltage_loop():
     """Call voltage_control_step at ~100 Hz."""
     while True:
         try:
-            voltage_control_step(filtered_voltages, target_voltages, current_wipers, debug_enabled, calibrating)
+            voltage_control_step(filtered_voltages, target_voltages, current_wipers, debug_enabled, calibrating, auto_control)
         except Exception as e:
             print(f"Voltage task error: {e}")
         time.sleep(0.01)
