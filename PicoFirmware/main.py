@@ -209,7 +209,7 @@ def command_listener():
         else:
             print(f"Unknown command '{cmd}'. Type 'help'.")
 
-# --- Startup & Main Loop ---
+# --- Startup ---
 
 def startup():
     print("System started. Type 'help' to see available commands.")
@@ -218,14 +218,38 @@ def startup():
     set_wiper(0, current_wipers['adjustable'])
     set_wiper(1, current_wipers['fixed'])
 
-if __name__ == '__main__':
-    _register_commands()
-    _thread.start_new_thread(command_listener, ())
-    startup()
+
+# --- Periodic Tasks ---
+
+def led_loop():
+    """Call update_leds at 4 Hz."""
     while True:
         try:
             update_leds(filtered_voltages)
+        except Exception as e:
+            print(f"LED task error: {e}")
+        time.sleep(0.25)
+
+
+def voltage_loop():
+    """Call voltage_control_step at ~100 Hz."""
+    while True:
+        try:
             voltage_control_step(filtered_voltages, target_voltages, current_wipers, debug_enabled, calibrating)
         except Exception as e:
-            print(f"Runtime error in main loop: {e}")
+            print(f"Voltage task error: {e}")
         time.sleep(0.01)
+
+
+if __name__ == '__main__':
+    _register_commands()
+    # Start CLI listener
+    _thread.start_new_thread(command_listener, ())
+    # Start periodic tasks
+    _thread.start_new_thread(led_loop, ())
+    _thread.start_new_thread(voltage_loop, ())
+    # Initialization
+    startup()
+    # Keep the main thread alive
+    while True:
+        time.sleep(1)
