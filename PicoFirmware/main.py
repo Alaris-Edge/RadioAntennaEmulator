@@ -87,6 +87,8 @@ def command_setres(pot, value):
             key = 'fixed' if p == 1 else 'adjustable'
         # Disable automatic control for manual pot adjustment
         auto_control[key] = False
+        # Sleep for 50ms to let the pending SPI writes settle and ensure all threads depending on auto_control get the update
+        time.sleep_ms(50)
         v = int(value)
         set_wiper(p, v)
         current_wipers[key] = v
