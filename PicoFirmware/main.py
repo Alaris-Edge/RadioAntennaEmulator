@@ -157,7 +157,7 @@ def command_debugvolt(*args):
 def command_debug():
     global debug_enabled
     debug_enabled = not debug_enabled
-    print(f"Debug messages {'enabled' if debug_enabled else 'disabled'}.")
+    print(f"Debug messages {'enabled' if debug_enabled else 'disabled' }.")
 
 
 def command_resetcal():
@@ -223,6 +223,9 @@ if __name__ == '__main__':
     _thread.start_new_thread(command_listener, ())
     startup()
     while True:
-        update_leds(filtered_voltages)
-        voltage_control_step(filtered_voltages, target_voltages, current_wipers, debug_enabled, calibrating)
+        try:
+            update_leds(filtered_voltages)
+            voltage_control_step(filtered_voltages, target_voltages, current_wipers, debug_enabled, calibrating)
+        except Exception as e:
+            print(f"Runtime error in main loop: {e}")
         time.sleep(0.01)
