@@ -46,7 +46,7 @@ Voltage Control and Potentiometer:
      Examples: readvolt, readvolt adjustable
 
 Calibration:
-  calibrate <ch>           Calibrate channel; 'fixed' or 'adjustable'
+  calibrate <ch>           Calibrate channel; 'fixed', 'adjustable', or 'all' calibrate both
      Example: calibrate fixed
   calibrate_all            Calibrate both channels
      Example: calibrate_all
@@ -144,6 +144,8 @@ def command_readvolt(*args):
 def command_calibrate(channel):
     global calibrating
     ch = channel.lower()
+    if ch is 'all':
+        command_calibrate_all()
     if ch not in target_voltages:
         print("Error: channel must be 'fixed' or 'adjustable'.")
         return
@@ -291,10 +293,15 @@ if __name__ == '__main__':
         now = time.ticks_ms()
         
         # Onboard LED toggle every second
-        if time.ticks_diff(now, last_toggle) >= TOGGLE_INTERVAL_MS:
-            onboard_led.value(not onboard_led.value())
-            # Onboard LED not working, let's use one of the other ones
-            leds[3] = [0, not(leds[3][1]), 0]
+        if time.ticks_diff(now, last_toggle) >= TOGGLE_INTERVAL_MS and auto_update_led[3]:
+            if calibrating: # Flash blue LED when calibrating
+                # onboard_led.value(not onboard_led.value())
+                # Onboard LED not working, let's use one of the other ones
+                leds[3] = [0, 0, not(leds[3][2])]
+            else: # Flash green LED when not calibrating
+                # onboard_led.value(not onboard_led.value())
+                # Onboard LED not working, let's use one of the other ones
+                leds[3] = [0, not(leds[3][1]), 0]
             last_toggle = now
 
 

@@ -94,6 +94,13 @@ def update_leds(filtered_voltages=None, antenna_mode=None, auto_update_led=None,
     if auto_update_led.get(3, True):
         pass  # TODO: add auto logic for LED3
 
+    # There is a layout error causing bits to be swapped. Let's fix this here
+    leds_to_write = [[bit for bit in led] for led in leds]
+    # LED 1 RED swapped with LED 2 BLUE
+    leds_to_write[1][0],leds_to_write[2][2] = leds_to_write[2][2],leds_to_write[1][0] 
+    # LED 1 GREEN swapped with LED 2 GREEN
+    leds_to_write[1][1],leds_to_write[2][1] = leds_to_write[2][1],leds_to_write[1][1] 
+
     # Debug logs
     if debug:
         print("DEBUG update_leds: leds=", leds)
@@ -104,7 +111,7 @@ def update_leds(filtered_voltages=None, antenna_mode=None, auto_update_led=None,
     LED_RCK.value(0)
 
     # Shift out bits: each LED is [R, G, B], send reversed (B, G, R)
-    for led_idx, led in enumerate(leds):
+    for led_idx, led in enumerate(leds_to_write):
         for bit_idx, bit in enumerate(reversed(led)):
             if debug:
                 print(f"LED{led_idx} bit{bit_idx} -> {bit}")
