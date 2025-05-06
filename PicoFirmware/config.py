@@ -4,7 +4,7 @@ config.py
 Centralized hardware configuration and pin assignments for the Pico-based control system.
 """
 
-from machine import Pin, PWM, ADC, SPI
+from machine import Pin, PWM, ADC, SPI, I2C
 
 # --- Power Control ---
 kill_pin = Pin(22, Pin.OUT)
@@ -63,6 +63,11 @@ spi = SPI(
     mosi=Pin(MOSI_PIN),
     miso=None
 )
+
+# EEPROM via I2C
+SCL = 1
+SDA = 0
+i2c = I2C(0, scl=Pin(SCL), sda=Pin(SDA), freq=400_000)
 
 # Default voltage targets for rails
 DEFAULT_TARGET_VOLTAGES = {'fixed': 3.3, 'adjustable': 5.0}
