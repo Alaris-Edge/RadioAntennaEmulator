@@ -64,5 +64,10 @@ spi = SPI(
     miso=None
 )
 
+# EEPROM via I2C
+SCL = 1
+SDA = 0
+i2c = I2C(0, scl=Pin(SDA), sda=Pin(SDA), freq=400_000)
+
 # Default voltage targets for rails
 DEFAULT_TARGET_VOLTAGES = {'fixed': 3.3, 'adjustable': 5.0}
