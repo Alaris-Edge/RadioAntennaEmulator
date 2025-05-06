@@ -92,10 +92,10 @@ def update_leds(filtered_voltages=None, antenna_mode=None, auto_update_led=None,
 
     # LED3: placeholder for future automatic updates (manual overrides persist)
     if auto_update_led.get(3, True):
-        pass  # TODO: add auto logic for LED3
+        pass  #: add auto logic for LED3 (IMPLEMENTED in MAIN, not here)
 
     # There is a layout error causing bits to be swapped. Let's fix this here
-    leds_to_write = [[bit for bit in led] for led in leds]
+    leds_to_write = [[bit for bit in led] for led in leds] #Deep copy leds to not overwrite values
     # LED 1 RED swapped with LED 2 BLUE
     leds_to_write[1][0],leds_to_write[2][2] = leds_to_write[2][2],leds_to_write[1][0] 
     # LED 1 GREEN swapped with LED 2 GREEN
