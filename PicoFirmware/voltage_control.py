@@ -3,6 +3,7 @@ voltage_control.py
 
 Handles ADC readings for fixed and adjustable voltage rails, shutdown, wiper control,
 calibration routines with settling polls, persistent storage, and debug accessors.
+Includes detailed logging when loading calibration.
 """
 
 import time
@@ -36,8 +37,9 @@ def load_calibration():
                 if isinstance(entry, dict):
                     _calibration[ch]['slope'] = float(entry.get('slope', _DEFAULT_SLOPE))
                     _calibration[ch]['intercept'] = float(entry.get('intercept', 0.0))
-    except Exception:
-        pass
+        print(f"Calibration loaded successfully from '{CALIB_FILE}'")
+    except Exception as e:
+        print(f"Warning: could not load calibration from '{CALIB_FILE}': {e}")
 
 
 def save_calibration():
@@ -56,6 +58,7 @@ def reset_calibration():
     }
     try:
         os.remove(CALIB_FILE)
+        print(f"Calibration file '{CALIB_FILE}' deleted, using defaults.")
     except OSError:
         pass
 
@@ -169,6 +172,7 @@ load_calibration()
 
 # --- New high-level voltage control API ---
 
+
 def set_voltage_target(channel, target, filtered_voltages, target_voltages):
     """Set a new target voltage and reset its filtered value."""
     if channel not in target_voltages:
@@ -182,7 +186,6 @@ def voltage_control_step(filtered_voltages, target_voltages, current_wipers, deb
     if auto_control is None:
         auto_control = {}
 
-    # Skip automatic control during calibration
     # Skip automatic control during calibration
     if calibrating:
         return

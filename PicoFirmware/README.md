@@ -1,87 +1,298 @@
-# Pi Pico Radio Emulator Control Documentation
+# Pico Control System
 
-This document will outline how to interact with the Pi Pico to control its core functions.
+## Overview & Objectives
 
-## Voltage output control and setting
-### Setting Output through resistance control
-Setting the resistance
-``setres <potentiometer_channel> <potentiometer_position>``
+This software package controls a Raspberry Pi Pico-based hardware platform featuring:
 
-for adjustable line ``potentiometer_channel == "adjustable"``
-for 3.3V line ``potentiometer_channel == "fixed"``
+* **Dual voltage rails** (fixed 3.3 V and adjustable up to 9 V) with closed-loop regulation via digital potentiometers.
+* **4 status LEDs** driven through a shift register: one displays a heat-map of adjustable voltage, another shows antenna mode, and two are reserved for user-defined indicators.
+* **48-bit CPLD interface** over a 50-pin connector, handling antenna array steering (azimuth/elevation), amplifier modes, test port routing, power enable, and sensor multiplexing.
+* **Command-line and (future) Bluetooth CLI** for real-time user interaction.
+* **I²C EEPROM** for data storage (e.g. calibration maps).
 
- ``0 => potentiometer_position > 256``
+The goals are:
 
-To set the second channel of the digital potentiometer to its lowest value:
-``setres fixed 255``
+1. **Stable, responsive voltage control** with configurable smoothing and auto/manual override.
+2. **Modular, maintainable code** separating config, hardware drivers, control loops, and user interface.
+3. **Comprehensive CLI** for setup, monitoring, and dynamic operation of all subsystems.
+4. **Clear documentation and logging** to facilitate troubleshooting and future enhancements.
 
-**Note** that when first powered the digital potentiometer will default to its middle position, **127** or a resistance of **5k** Ohm.
+---
 
-### Reading the output
-Reading the output voltage
-``readvolt <voltage_channel>``
+## System Architecture & Interfaces
 
-for adjustable line ``voltage_channel== "adjustable"``
-for 3.3V line ``voltage_channel== "fixed"``
+### 1. Configuration (`config.py`)
 
-To read the fixed channel voltage level: ``readvolt fixed``
+* Central hardware pin assignments: LEDs, ADC channels, digital potentiometer SPI, shift-register control pins, fan PWM, I²C pins.
+* Constants for EMA filter, heat-map thresholds, and default target voltages.
+* Provides `DEFAULT_TARGET_VOLTAGES` dict used to initialize control loops.
 
-This will return ``<voltage_channel> "Voltage: " <voltage> " V"`` (e.g. ``Fixed voltage: 3.23 V``)
+### 2. Voltage Control (`voltage_control.py`)
 
-**Note** that the voltage traces are read indirectly through a 25k-5k resistor. The value read is multiplied by **5** to obtain the input level, this multiplier may need initial calibration for accurate readings.
+* Reads raw ADC counts for fixed and adjustable rails.
+* Applies calibration (slope/intercept) loaded from `voltage_calibration.json`.
+* Implements two-point calibration and JSON persistence.
+* Offers a high-level API:
 
-## Antenna sense read
- Reading the antenna pin value
- ``antenna``
+  * `set_voltage_target(channel, target, filtered_voltages, target_voltages)`
+  * `voltage_control_step(filtered_voltages, target_voltages, current_wipers, debug=False, calibrating=False)`
 
-This will return a value in the range 0 to 65535
+### 3. LED Control (`led_control.py`)
 
-A response may will look like ``"Antenna: " <value>`` (e.g. ``Antenna: 65020``)
+* Manages 4 RGB LEDs via a serial-in, parallel-out shift register.
+* LED0: heat-map of adjustable rail voltage.
+* LED1: displays antenna mode.
+* LED2–LED3: manual override with future auto-update placeholders.
+* Supports per-LED auto/manual flags and optional debug logging.
 
-## Read FM Mode
+### 4. Antenna & CPLD Interface (`antenna_mode.py`)
 
-Reading the current mode
-``readmode``
+This module defines how 48 *software* bits map through the 50‑pin connector to physical signals, and groups them into functional blocks. In hardware, **7** of those outputs are wired directly to ground, and **1** carries the MUX’s sensor‑output. The remaining **40** bits implement your protocol:
 
-This will return 4 binary values for each of the FM pins to be read.
+* **D50 Connector Mapping:**
 
-A response will look like ``Current Mode: <FM_00><FM_01><FM_02><FM_03>``
+  * Software bits are shifted out in a fixed order (0–47). Each index → connector pin (1–50) via `D50_PINS`, then → signal name via `PIN_TO_SIGNAL`.
+  * Of the 50 connector pins, 48 are driven by the shift register; 2 are unused.
+  * **7 pins** (`DGND`) are grounded in hardware and always read/write `0`.
+  * **1 pin** (`SENS_OUT`) feeds back the selected sensor from the SS multiplexer.
 
-## Write and write from the shift registers
-To write to the DD50 connector ``write <[data]>``
+* **Functional Blocks (40 bits):**
 
-The ``data`` should be an array of binary values 50 charicters long to be written to the shift register.
-The value at value 6, 7, 8, 13, 19, 24, 34, 35, 36, 37, 40 and 46 is not not important as these are all currently used for other purposes.
+  * **AZ** (24 bits): azimuth steering control.
+  * **EL** (2 bits): elevation beam select.
+  * **FM** (4 bits): amplifier (FEM) mode select.
+  * **AT** (3 bits): antenna test port routing.
+  * **PE** (2 bits): power enable for external supplies (8 V and 3.3 V).
+  * **SS** (5 bits): selects which sensor channel appears on `SENS_OUT`.
 
-To read the previous value from the shift registers ``read``.
-This will return the previous value of the shift register or the most recent string of values that have been output.
+* **Effective Command Word:** 40 active bits + 7 ground bits + 1 feedback bit = 48 total bits.
 
-## Kill Power
-The ``shutdown`` command will kill the power about 1000 milliseconds after it is received.
+* **API Helpers:**
 
-It will respond: ``Shutdown in 1000ms – say goodbye to your Pico!``
+  * `build_cpld_pattern(AZ=…, EL=…, FM=…, AT=…, PE=…, SS=…)` updates only the specified block bits, preserving all others.
+  * `update_shift_registers(bits)` writes the full 48‑bit pattern (including ground and unused bits) to the hardware.
+  * `read_shift_registers()` reads back all 48 bits, including `SENS_OUT` on its dedicated bit index.
 
-## Fan Control
-**This feature should not be needed and has not been tested**
-To set the fan speed ``setfan <duty_cycle>`` (e.g. ``setfan 55``)
+### 5. I²C EEPROM (`i2c.py`)
 
-This fan will be off when below 20% duty cycle. The fan will be on between 20% and 100% duty cycle.
+I²C EEPROM (`i2c.py`)
 
-When the command is received, the fan speed will be set and there is a message to say that it has been set.
+* Interfaces with a 24LC32AT via I²C for data storage.
+* `data_write(start_address, data)`: page-write with ACK polling.
+* `data_read(start_address, num_bytes)`: bounds-checked burst read.
 
-When the Pi Pico is shutdown the PWM will be disabled.
+### 6. Main Application & CLI (`main.py`)
 
-## Startup
-On start up the Pi Pico will perform the following in order:
+* Starts three periodic loops in dedicated threads:
 
-- Turn all LEDs on (white)
-- Read both analogue voltage levels and send over serial
-- Turn all LEDs off
-- Set the first LED to a color corresponding to the adjustable voltage level:
-         RED for 3.3V, GREEN for 5V, BLUE for 8V, WHITE for 9V.
+  * **Voltage loop** (\~100 Hz) handles ADC smoothing and wiper adjustments.
+  * **LED loop** (4 Hz) updates status LEDs based on voltage, mode, and manual overrides.
+  * **Onboard LED toggle** (1 Hz) provides a heartbeat indicator.
+* Registers a robust CLI with commands for all subsystems.
 
-After the startup has finished it will wait for a command sent over serial.
+## CLI Command Reference
 
+Below is a detailed reference of all supported CLI commands, their behavior, and usage examples.
 
+#### General Commands
 
+* `help`
 
+  * **What it does:** Lists all available commands with brief descriptions.
+  * **Expected behavior:** Prints the help text.
+  * **Example:**
+
+    ```
+    > help
+    ```
+
+* `shutdown`
+
+  * **What it does:** Powers down the Pico; leaves LEDs, voltage, and CPLD outputs in their last state.
+  * **Example:**
+
+    ```
+    > shutdown
+    ```
+
+#### Voltage Control & Potentiometer
+
+* `setres <pot> <value>`
+
+  * **What it does:** Manually sets the digital potentiometer wiper.
+  * **Parameters:**
+
+    * `<pot>`: `0` or `adjustable`, `1` or `fixed`.
+    * `<value>`: integer 0–255.
+  * **Expected behavior:** Updates wiper and prints confirmation. Disables automatic voltage control for that channel.
+  * **Example:**
+
+    ```
+    > setres adjustable 128
+    Pot 0 (adjustable) set to 128
+    ```
+
+* `setvolt <channel> <voltage>`
+
+  * **What it does:** Sets the target voltage for the specified rail and re-enables automatic control.
+  * **Parameters:**
+
+    * `<channel>`: `fixed` or `adjustable`.
+    * `<voltage>`: float in volts.
+  * **Example:**
+
+    ```
+    > setvolt fixed 3.3
+    fixed target set to 3.300 V
+    ```
+
+* `readvolt [channel]`
+
+  * **What it does:** Reads and displays the current and target voltage.
+  * **Parameters:**
+
+    * Optional `[channel]`: `fixed` or `adjustable`.
+  * **Example:**
+
+    ```
+    > readvolt
+    fixed voltage: 3.300 V (target: 3.30 V)
+    adjustable voltage: 5.000 V (target: 5.00 V)
+    ```
+
+#### Calibration Commands
+
+* `calibrate <channel>`
+
+  * **What it does:** Runs two-point calibration for the specified channel.
+  * **Example:**
+
+    ```
+    > calibrate adjustable
+    -- Calibrating 'adjustable' channel (pot 0) --
+    ```
+
+* `calibrate_all`
+
+  * **What it does:** Calibrates both channels sequentially.
+  * **Example:**
+
+    ```
+    > calibrate_all
+    ```
+
+* `resetcal`
+
+  * **What it does:** Resets calibration data to defaults and deletes the JSON file.
+  * **Example:**
+
+    ```
+    > resetcal
+    Calibration reset to defaults.
+    ```
+
+* `debugvolt [channel]`
+
+  * **What it does:** Shows raw ADC count, calibration slope/intercept, and voltage.
+  * **Example:**
+
+    ```
+    > debugvolt adjustable
+    adjustable raw_count=12345, slope=0.000184, intercept=0.000000, voltage=5.000 V
+    ```
+
+* `debug`
+
+  * **What it does:** Toggles verbose debug messages for loops.
+  * **Example:**
+
+    ```
+    > debug
+    Debug messages enabled.
+    ```
+
+#### CPLD Interface Commands
+
+* `cpld_write <data>`
+
+  * **What it does:** Writes a full 48-bit pattern in binary (48 chars) or hex (`0x...`) to the CPLD.
+  * **Example:**
+
+    ```
+    > cpld_write 0x123456789ABC
+    CPLD interface updated.
+    ```
+
+* `setaz <value>`
+
+  * **What it does:** Sets the 24-bit azimuth block; preserves other blocks.
+  * **Parameters:** binary (24 bits) or hex/int.
+  * **Example:**
+
+    ```
+    > setaz 0x00FFAA
+    Azimuth set to 0xFFAA (65450)
+    ```
+
+* `setel <value>`
+
+  * **What it does:** Sets the 2-bit elevation block.
+  * **Example:**
+
+    ```
+    > setel 2
+    Elevation set to 0x2 (10)
+    ```
+
+* `setfm <value>` / `setat <value>` / `setpe <value>` / `setss <value>`
+
+  * Similar to `setaz`, but for FEM mode (4 bits), antenna test (3 bits), power enable (2 bits), and sensor select (5 bits), respectively.
+
+* `setled <idx> <rgb|auto>`
+
+  * **What it does:** Manually sets LED index (`0`–`3`) via a 3-bit RGB string (e.g. `010`), or re-enables auto-update with `auto`.
+  * **Example:**
+
+    ```
+    > setled 2 101
+    LED 2 set to [1,0,1]
+    ```
+
+#### Status Query Commands
+
+* `readcpld`
+
+  * **What it does:** Reads and prints the full 48-bit CPLD register in hex and binary.
+  * **Example:**
+
+    ```
+    > readcpld
+    CPLD full pattern: 0x123456789ABC 0001...1011
+    ```
+
+* `readaz` / `readel` / `readfm` / `readat` / `readpe` / `readss`
+
+  * **What they do:** Read and report the current value of each functional block in hex and binary.
+  * **Example:**
+
+    ```
+    > readaz
+    AZ (24-bit): 0x00FFAA 0000000011111111101010
+    ```
+
+* `readcommand`
+
+  * **What it does:** Runs all `read*` queries in sequence to display each block’s current value.
+  * **Example:**
+
+    ```
+    > readcommand
+    AZ: 0x00FFAA 0000000011111111101010
+    EL: 0x2     10
+    FM: 0x9     1001
+    AT: 0x3     011
+    PE: 0x1     01
+    SS: 0x12    10010
+    ```
+
+For screenshots or further guidance, refer to the individual module docstrings and inline examples.
