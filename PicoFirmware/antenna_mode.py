@@ -32,6 +32,9 @@ rev = _raw[::-1]
 STAGE_TO_PIN = rev
 # STAGE_TO_PIN = [rev[-1]] + rev[:-1]  # now index 0 is stage0 pin, index 1 stage1 pin, etc.
 
+
+# This is the orgiginal mapping as I expected it, but during testing some of the signals seem swapped in the shift register
+# The error is probably a mistake in the order in which things are enumerated, not in the hardware
 PIN_TO_SIGNAL = {
     1:'SS_04',2:'SS_02',3:'SS_01',4:'AT_02',5:'AT_01',6:'DGND',7:'DGND',8:'SENS_OUT',
     9:'AZ_23',10:'AZ_21',11:'AZ_20',12:'AZ_18',13:'DGND',14:'AZ_16',15:'AZ_15',16:'AZ_13',
@@ -41,6 +44,18 @@ PIN_TO_SIGNAL = {
    38:'FM_02',39:'FM_01',40:'DGND',41:'EL_01',42:'AZ_11',43:'AZ_10',44:'AZ_08',45:'AZ_07',
    46:'DGND',47:'AZ_05',48:'AZ_03',49:'AZ_02',50:'AZ_00'
 }
+
+# correct the swapped bits
+# PIN_TO_SIGNAL[21] = 'FM_02'
+# PIN_TO_SIGNAL[38] = 'FM_01'
+
+# PIN_TO_SIGNAL[5] = 'AT_00'
+# PIN_TO_SIGNAL[22] = 'AT_01'
+
+# PIN_TO_SIGNAL[2] = 'SS_01'
+# PIN_TO_SIGNAL[1] = 'SS_02'
+# PIN_TO_SIGNAL[3] = 'SS_04'
+
 STAGE_TO_SIGNAL = [PIN_TO_SIGNAL[p] for p in STAGE_TO_PIN]
 # print(STAGE_TO_SIGNAL)
 # --- Block stage lists ---
@@ -49,12 +64,37 @@ AZ_STAGES = sorted(
     (i for i,s in enumerate(STAGE_TO_SIGNAL) if s.startswith('AZ_')),
     key=lambda st: int(STAGE_TO_SIGNAL[st].split('_')[1])
 )  # now AZ_STAGES[n] is stage for AZ_n
-EL_STAGES = [i for i,s in enumerate(STAGE_TO_SIGNAL) if s.startswith('EL_')]
-FM_STAGES = [i for i,s in enumerate(STAGE_TO_SIGNAL) if s.startswith('FM_')]
-AT_STAGES = [i for i,s in enumerate(STAGE_TO_SIGNAL) if s.startswith('AT_')]
-PE_STAGES = [i for i,s in enumerate(STAGE_TO_SIGNAL) if s.startswith('PE_')]
-SS_STAGES = [i for i,s in enumerate(STAGE_TO_SIGNAL) if s.startswith('SS_')]
+# Build EL stage list sorted by elevation bit number (EL_00 ... EL_01)
+EL_STAGES = sorted(
+    (i for i,s in enumerate(STAGE_TO_SIGNAL) if s.startswith('EL_')),
+    key=lambda st: int(STAGE_TO_SIGNAL[st].split('_')[1])
+)
+# Build FM stage list sorted by FEM mode bit number (FM_00 ... FM_03)
+FM_STAGES = sorted(
+    (i for i,s in enumerate(STAGE_TO_SIGNAL) if s.startswith('FM_')),
+    key=lambda st: int(STAGE_TO_SIGNAL[st].split('_')[1])
+)
+# Build AT stage list sorted by antenna-test bit number (AT_00 ... AT_02)
+AT_STAGES = sorted(
+    (i for i,s in enumerate(STAGE_TO_SIGNAL) if s.startswith('AT_')),
+    key=lambda st: int(STAGE_TO_SIGNAL[st].split('_')[1])
+)
+# Build PE stage list sorted by power-enable signal name (PE_3P3V_EN, PE_8P0V_EN)
+PE_STAGES = sorted(
+    (i for i,s in enumerate(STAGE_TO_SIGNAL) if s.startswith('PE_')),
+    key=lambda st: STAGE_TO_SIGNAL[st]
+)
+# Build SS stage list sorted by sensor-select bit number (SS_00 ... SS_04)
+SS_STAGES = sorted(
+    (i for i,s in enumerate(STAGE_TO_SIGNAL) if s.startswith('SS_')),
+    key=lambda st: int(STAGE_TO_SIGNAL[st].split('_')[1])
+)
 # SENS_STAGE = STAGE_TO_SIGNAL.index('SENS_OUT')
+# print(EL_STAGES)
+# print(FM_STAGES)
+# print(AT_STAGES)
+# print(PE_STAGES)
+# print(SS_STAGES)
 
 # --- Bit conversion (LSB-first) ---
 def convert_to_bits(data):
@@ -165,7 +205,8 @@ def read_pe(): return sum(read_shift_registers()[st]<<i for i,st in enumerate(PE
 def read_ss(): return sum(read_shift_registers()[st]<<i for i,st in enumerate(SS_STAGES))
 
 def read_sense(): return antenna_sense.read_u16()
-def read_mode(): bits=[pin.value() for pin in mode_pins]; return (bits[0]<<3)|(bits[1]<<2)|(bits[2]<<1)|bits[3]
+# def read_mode(): bits=[pin.value() for pin in mode_pins]; return (bits[0]<<3)|(bits[1]<<2)|(bits[2]<<1)|bits[3]
+def read_mode(): bits=[pin.value() for pin in mode_pins]; return (bits[0]<<2)|(bits[1]<<1)|bits[2]
 def set_fan_speed(p):
     if p<0 or p>100: raise ValueError
     fan_pwm.duty_u16(0 if p<20 else int(p/100*65535))

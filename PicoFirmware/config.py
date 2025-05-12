@@ -37,7 +37,8 @@ SR_OUT   = Pin(10, Pin.IN)
 FILTER_ALPHA = 0.9
 
 # Mode select inputs (3-bit)
-mode_pins = [Pin(n, Pin.IN) for n in (2, 3, 4, 5)]
+mode_pins = [Pin(n, Pin.IN) for n in (2, 3, 4)]
+xor_pin = 5
 
 # Fan control (PWM)
 fan_pwm = PWM(Pin(21))

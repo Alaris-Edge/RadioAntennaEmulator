@@ -1,298 +1,383 @@
 # Pico Control System
 
-## Overview & Objectives
+**## Overview & Objectives**
 
-This software package controls a Raspberry Pi Pico-based hardware platform featuring:
+This firmware runs on a Raspberry Pi Pico W 2 and serves as the brain for a custom control PCB designed for the SBA1327BS‑DP FEM (active) antenna module. It provides:
 
-* **Dual voltage rails** (fixed 3.3 V and adjustable up to 9 V) with closed-loop regulation via digital potentiometers.
-* **4 status LEDs** driven through a shift register: one displays a heat-map of adjustable voltage, another shows antenna mode, and two are reserved for user-defined indicators.
-* **48-bit CPLD interface** over a 50-pin connector, handling antenna array steering (azimuth/elevation), amplifier modes, test port routing, power enable, and sensor multiplexing.
-* **Command-line and (future) Bluetooth CLI** for real-time user interaction.
-* **I²C EEPROM** for data storage (e.g. calibration maps).
+* **Full CLI interface** over USB‑UART (and optional Bluetooth/Wi‑Fi) so operators can send commands in real time to the on‑antenna CPLD.
+* **Voltage rail management** for the dual supplies on the control board: a fixed 3.3 V rail and an adjustable rail up to 9 V, both under closed‑loop regulation via digital potentiometers. Note that the PCB allows the "fixed" rail to be adjusted from about 1.7 to 5.8 V, but it is not reccomended to adjust this voltage, as the SBA1327BS-DP-FEM will be damaged when powered with a voltage other than 3.3 V. The control boards have been calibrated by COJOT prior to delivery, and updating the firmware will not overwrite the factory calibration.
+* **Antenna mode control** via a 48‑bit shift register chain driving the CPLD: azimuth/elevation steering, FEM mode selection, test port routing, power‑enable flags, and sensor‑channel multiplexing.
+* **LED status reporting** and debug logging to give immediate visual feedback on voltages, FEM mode, system state, and calibration progress.
+* **Non‑volatile calibration storage** for retention of voltage‑rail and ADC calibration data.
 
-The goals are:
-
-1. **Stable, responsive voltage control** with configurable smoothing and auto/manual override.
-2. **Modular, maintainable code** separating config, hardware drivers, control loops, and user interface.
-3. **Comprehensive CLI** for setup, monitoring, and dynamic operation of all subsystems.
-4. **Clear documentation and logging** to facilitate troubleshooting and future enhancements.
+**Supply Input & Thermal Considerations:**
+The control PCB accepts a single 12 V input via banana plugs (reverse‑polarity protected). Onboard linear regulators generate a fixed 3.3 V rail and an adjustable rail (up to 9 V). Because linear regulation dissipates the voltage drop as heat, we recommend limiting the input-to-output differential to approximately 2 V when operating at high current for extended periods. Under heavy load, both the PCB and its aluminum mounting plate can become very hot—use caution and allow adequate cooling before handling.
 
 ---
 
-## System Architecture & Interfaces
+**## System Architecture & Interfaces**
+
+### D50 Connector Pinout
+
+```
+Pin 1   : SS_04
+Pin 2   : SS_02
+Pin 3   : SS_01
+Pin 4   : AT_02
+Pin 5   : AT_01
+Pin 6   : DGND*
+Pin 7   : DGND*
+Pin 8   : ANT_SENSE_OUT
+Pin 9   : AZ_23
+Pin 10  : AZ_21
+Pin 11  : AZ_20
+Pin 12  : AZ_18
+Pin 13  : DGND
+Pin 14  : AZ_16
+Pin 15  : AZ_15
+Pin 16  : AZ_13
+Pin 17  : AZ_12
+Pin 18  : SS_03
+Pin 19  : IF_I2C1_SDA
+Pin 20  : SS_00
+Pin 21  : FM_03
+Pin 22  : AT_00
+Pin 23  : FM_00
+Pin 24  : DGND*
+Pin 25  : EL_00
+Pin 26  : AZ_22
+Pin 27  : AZ_09
+Pin 28  : AZ_19
+Pin 29  : AZ_06
+Pin 30  : AZ_17
+Pin 31  : AZ_04
+Pin 32  : AZ_14
+Pin 33  : AZ_01
+Pin 34  : ANT_8P0V_EN
+Pin 35  : ANT_3P3V_EN
+Pin 36  : IF_I2C1_SCL
+Pin 37  : DGND*
+Pin 38  : FM_02
+Pin 39  : FM_01
+Pin 40  : DGND*
+Pin 41  : EL_01
+Pin 42  : AZ_11
+Pin 43  : AZ_10
+Pin 44  : AZ_08
+Pin 45  : AZ_07
+Pin 46  : DGND*
+Pin 47  : AZ_05
+Pin 48  : AZ_03
+Pin 49  : AZ_02
+Pin 50  : AZ_00
+```
+
+* Digital ground pins may be tied together on board.
 
 ### 1. Configuration (`config.py`)
 
-* Central hardware pin assignments: LEDs, ADC channels, digital potentiometer SPI, shift-register control pins, fan PWM, I²C pins.
-* Constants for EMA filter, heat-map thresholds, and default target voltages.
-* Provides `DEFAULT_TARGET_VOLTAGES` dict used to initialize control loops.
+* Defines pin assignments (LEDs, ADCs, SPI/I²C, shift‑register control, fan PWM).
+* Filter constants, heat‑map thresholds, default voltage setpoints.
 
 ### 2. Voltage Control (`voltage_control.py`)
 
-* Reads raw ADC counts for fixed and adjustable rails.
-* Applies calibration (slope/intercept) loaded from `voltage_calibration.json`.
-* Implements two-point calibration and JSON persistence.
-* Offers a high-level API:
+* ADC readings, calibration via `voltage_calibration.json`.
+* Two‑point linear calibration with JSON persistence.
+* **Default rails:** fixed = 3.3 V, adjustable = 5 V (adjustable can be set up to 9 V).
+
+**Tested Load Conditions:**
+
+* 3.3 V @ 6 A → 19.8 W
+
+* 5 V @ 10 A → 50 W
+
+* 8 V @ 15 A → 120 W
+
+* 9 V @ 14 A → 126 W (beyond 14 A, the voltage decreases even when set to 9 V)
+
+* API:
 
   * `set_voltage_target(channel, target, filtered_voltages, target_voltages)`
-  * `voltage_control_step(filtered_voltages, target_voltages, current_wipers, debug=False, calibrating=False)`
+  * `voltage_control_step(...)`
 
 ### 3. LED Control (`led_control.py`)
 
-* Manages 4 RGB LEDs via a serial-in, parallel-out shift register.
-* LED0: heat-map of adjustable rail voltage.
-* LED1: displays antenna mode.
-* LED2–LED3: manual override with future auto-update placeholders.
-* Supports per-LED auto/manual flags and optional debug logging.
+* Drives 4 LEDs through shift register.
+* Supports auto/manual per‑LED.
+
+**LED0 (Adjustable‑Rail Heat‑Map):**
+
+* Voltage < 3.2 V  → off
+* 3.2 – 3.5 V → blue
+* 3.5 – 4.5 V → cyan
+* 4.5 – 5.5 V → green
+* 5.5 – 6.5 V → yellow
+* 6.5 – 7.5 V → red
+* 7.5 – 8.5 V → magenta
+* 8.5 V → white
+
+**LED1 (FEM Mode Indicator):**
+
+* FM bits 000 → off
+* 001 → blue
+* 010 → cyan
+* 011 → green
+* 100 → yellow
+* 101 → red
+* 110 → magenta
+* 111 → white
+
+**LED2 (Future Sensor/Temperature):**
+
+* Reserved (not yet implemented)
+
+**LED3 (System Status):**
+
+* Flashes green → normal control mode
+* Flashes blue → calibration in progress
+* Solid red → Pico powered down
 
 ### 4. Antenna & CPLD Interface (`antenna_mode.py`)
 
-This module defines how 48 *software* bits map through the 50‑pin connector to physical signals, and groups them into functional blocks. In hardware, **7** of those outputs are wired directly to ground, and **1** carries the MUX’s sensor‑output. The remaining **40** bits implement your protocol:
+Antenna & CPLD Interface (`antenna_mode.py`)
 
-* **D50 Connector Mapping:**
+* Explicit **stage→pin** mapping: 48 shift‑register stages → D50 connector pins.
+* `STAGE_TO_PIN` built by reversing and rotating the board’s pin list.
+* **Functional blocks** with sorted stage lists:
 
-  * Software bits are shifted out in a fixed order (0–47). Each index → connector pin (1–50) via `D50_PINS`, then → signal name via `PIN_TO_SIGNAL`.
-  * Of the 50 connector pins, 48 are driven by the shift register; 2 are unused.
-  * **7 pins** (`DGND`) are grounded in hardware and always read/write `0`.
-  * **1 pin** (`SENS_OUT`) feeds back the selected sensor from the SS multiplexer.
+  * AZ (24 bits)
+  * EL (2 bits)
+  * FM (4 bits)
+  * AT (3 bits)
+  * PE (2 bits)
+  * SS (5 bits)
+* Helpers:
 
-* **Functional Blocks (40 bits):**
+  * `convert_to_bits(data)` → 48‑bit LSB‑first list.
+  * `build_cpld_pattern(AZ=…,EL=…,FM=…,AT=…,PE_val=…,SS=…)` overlays only specified bits.
+  * `update_shift_registers(bits)` shifts LSB‑first and latches.
+  * `read_shift_registers()` returns raw LSB‑first bits.
+  * `read_az()`, `read_el()`, … `read_ss()`, `read_command()` for decoded feedback.
+  * `map_shift_stages()` utility to manually map stage→pin with ENTER prompts.
 
-  * **AZ** (24 bits): azimuth steering control.
-  * **EL** (2 bits): elevation beam select.
-  * **FM** (4 bits): amplifier (FEM) mode select.
-  * **AT** (3 bits): antenna test port routing.
-  * **PE** (2 bits): power enable for external supplies (8 V and 3.3 V).
-  * **SS** (5 bits): selects which sensor channel appears on `SENS_OUT`.
+### 5. I²C EEPROM (`i2c.py`) I²C EEPROM (`i2c.py`)
 
-* **Effective Command Word:** 40 active bits + 7 ground bits + 1 feedback bit = 48 total bits.
-
-* **API Helpers:**
-
-  * `build_cpld_pattern(AZ=…, EL=…, FM=…, AT=…, PE=…, SS=…)` updates only the specified block bits, preserving all others.
-  * `update_shift_registers(bits)` writes the full 48‑bit pattern (including ground and unused bits) to the hardware.
-  * `read_shift_registers()` reads back all 48 bits, including `SENS_OUT` on its dedicated bit index.
-
-### 5. I²C EEPROM (`i2c.py`)
-
-I²C EEPROM (`i2c.py`)
-
-* Interfaces with a 24LC32AT via I²C for data storage.
-* `data_write(start_address, data)`: page-write with ACK polling.
-* `data_read(start_address, num_bytes)`: bounds-checked burst read.
+* **Future**: board also provides an I²C interface to an EEPROM on the antenna module itself (for storing antenna‑specific configuration and calibration). Firmware hooks will be added and tested in a later release to support remote EEPROM access over the same I²C bus.
 
 ### 6. Main Application & CLI (`main.py`)
 
-* Starts three periodic loops in dedicated threads:
+* Three loops:
 
-  * **Voltage loop** (\~100 Hz) handles ADC smoothing and wiper adjustments.
-  * **LED loop** (4 Hz) updates status LEDs based on voltage, mode, and manual overrides.
-  * **Onboard LED toggle** (1 Hz) provides a heartbeat indicator.
-* Registers a robust CLI with commands for all subsystems.
+  * Voltage control (\~100 Hz)
+  * LED update (4 Hz)
+  * Heartbeat LED (1 Hz)
+* CLI commands for all subsystems, with detailed usage and exception tracebacks.
 
-## CLI Command Reference
+---
 
-Below is a detailed reference of all supported CLI commands, their behavior, and usage examples.
+**## CLI Command Reference**
+Each CLI command follows the pattern:
 
-#### General Commands
+```
+> command_name [parameters]
+```
+
+Parameters may be specified in hexadecimal (`0x`), binary (`0b`), or decimal.
 
 * `help`
 
-  * **What it does:** Lists all available commands with brief descriptions.
-  * **Expected behavior:** Prints the help text.
-  * **Example:**
-
-    ```
-    > help
-    ```
+  * **Params:** none
+  * **Action:** Display help text and CLI usage summary.
 
 * `shutdown`
 
-  * **What it does:** Powers down the Pico; leaves LEDs, voltage, and CPLD outputs in their last state.
-  * **Example:**
-
-    ```
-    > shutdown
-    ```
-
-#### Voltage Control & Potentiometer
-
-* `setres <pot> <value>`
-
-  * **What it does:** Manually sets the digital potentiometer wiper.
-  * **Parameters:**
-
-    * `<pot>`: `0` or `adjustable`, `1` or `fixed`.
-    * `<value>`: integer 0–255.
-  * **Expected behavior:** Updates wiper and prints confirmation. Disables automatic voltage control for that channel.
-  * **Example:**
-
-    ```
-    > setres adjustable 128
-    Pot 0 (adjustable) set to 128
-    ```
-
-* `setvolt <channel> <voltage>`
-
-  * **What it does:** Sets the target voltage for the specified rail and re-enables automatic control.
-  * **Parameters:**
-
-    * `<channel>`: `fixed` or `adjustable`.
-    * `<voltage>`: float in volts.
-  * **Example:**
-
-    ```
-    > setvolt fixed 3.3
-    fixed target set to 3.300 V
-    ```
-
-* `readvolt [channel]`
-
-  * **What it does:** Reads and displays the current and target voltage.
-  * **Parameters:**
-
-    * Optional `[channel]`: `fixed` or `adjustable`.
-  * **Example:**
-
-    ```
-    > readvolt
-    fixed voltage: 3.300 V (target: 3.30 V)
-    adjustable voltage: 5.000 V (target: 5.00 V)
-    ```
-
-#### Calibration Commands
-
-* `calibrate <channel>`
-
-  * **What it does:** Runs two-point calibration for the specified channel.
-  * **Example:**
-
-    ```
-    > calibrate adjustable
-    -- Calibrating 'adjustable' channel (pot 0) --
-    ```
-
-* `calibrate_all`
-
-  * **What it does:** Calibrates both channels sequentially.
-  * **Example:**
-
-    ```
-    > calibrate_all
-    ```
-
-* `resetcal`
-
-  * **What it does:** Resets calibration data to defaults and deletes the JSON file.
-  * **Example:**
-
-    ```
-    > resetcal
-    Calibration reset to defaults.
-    ```
-
-* `debugvolt [channel]`
-
-  * **What it does:** Shows raw ADC count, calibration slope/intercept, and voltage.
-  * **Example:**
-
-    ```
-    > debugvolt adjustable
-    adjustable raw_count=12345, slope=0.000184, intercept=0.000000, voltage=5.000 V
-    ```
+  * **Params:** none
+  * **Action:** Exit the CLI and halt the firmware loop.
+    Voltage rails and outputs hold at their last values until restart.
+    To restart: cycle board power or press the blue reset button on the PCB;
+    CPLD outputs remain latched, and voltage rails reset to defaults (3.3 V fixed, 5 V adjustable).
 
 * `debug`
 
-  * **What it does:** Toggles verbose debug messages for loops.
-  * **Example:**
+  * **Params:** none
+  * **Action:** Toggle debug logging on/off.
+    When enabled, internal build steps and error tracebacks print to the console.
 
-    ```
-    > debug
-    Debug messages enabled.
-    ```
+* `setres <pot> <v>`
 
-#### CPLD Interface Commands
+  * **Params:**
 
-* `cpld_write <data>`
+    * `pot`: 0 (adjustable) or 1 (fixed)
+    * `v`: integer 0–255
+  * **Action:** Directly set the digital potentiometer wiper. Disables automatic regulation
+    for the specified pot.
 
-  * **What it does:** Writes a full 48-bit pattern in binary (48 chars) or hex (`0x...`) to the CPLD.
-  * **Example:**
+* `setvolt <ch> <V>`
 
-    ```
-    > cpld_write 0x123456789ABC
-    CPLD interface updated.
-    ```
+  * **Params:**
 
-* `setaz <value>`
+    * `ch`: `fixed` or `adjustable`
+    * `V`: target voltage in volts (float)
+  * **Action:** Update the voltage target for channel `<ch>` and re-enable auto control.
 
-  * **What it does:** Sets the 24-bit azimuth block; preserves other blocks.
-  * **Parameters:** binary (24 bits) or hex/int.
-  * **Example:**
+* `readvolt [ch]`
 
-    ```
-    > setaz 0x00FFAA
-    Azimuth set to 0xFFAA (65450)
-    ```
+  * **Params:** optional channel (`fixed`/`adjustable`)
+  * **Action:** Read and display current and target voltages. If `[ch]` omitted, shows both.
 
-* `setel <value>`
+* `calibrate <ch>`
 
-  * **What it does:** Sets the 2-bit elevation block.
-  * **Example:**
+  * **Params:** `fixed`, `adjustable`, or `all`
+  * **Action:** Perform two-point calibration on specified channel(s). Saves data to EEPROM.
 
-    ```
-    > setel 2
-    Elevation set to 0x2 (10)
-    ```
+* `resetcal`
 
-* `setfm <value>` / `setat <value>` / `setpe <value>` / `setss <value>`
+  * **Params:** none
+  * **Action:** Reset stored calibration data to factory defaults.
 
-  * Similar to `setaz`, but for FEM mode (4 bits), antenna test (3 bits), power enable (2 bits), and sensor select (5 bits), respectively.
+* `cpld_write <d>`
 
-* `setled <idx> <rgb|auto>`
+  * **Params:** raw 48-bit pattern (hex/bin/int or list)
+  * **Action:** Write the specified bit pattern directly to the CPLD shift registers,
+    overriding all functional block settings.
 
-  * **What it does:** Manually sets LED index (`0`–`3`) via a 3-bit RGB string (e.g. `010`), or re-enables auto-update with `auto`.
-  * **Example:**
+* `setaz <v>`
 
-    ```
-    > setled 2 101
-    LED 2 set to [1,0,1]
-    ```
+  * **Params:** `<v>` = 0x0–0xFFFFFF (hex) or decimal (0–16777215)
+  * **Action:** Set the 24-bit azimuth block (AZ\_00 to AZ\_23).
+  * **Example:** `> setaz 0x00123456`
 
-#### Status Query Commands
+* `setel <v>`
+
+  * **Params:** `<v>` = 0x0–0x3 (hex) or decimal (0–3)
+  * **Action:** Set the 2-bit elevation block (EL\_00 to EL\_01).
+  * **Example:** `> setel 0x3`
+
+* `setfm <v>`
+
+  * **Params:** `<v>` = 0x0–0xF (hex) or decimal (0–15)
+  * **Action:** Set the 4-bit FEM mode block (FM\_00 to FM\_03).
+  * **Example:** `> setfm 0xA`
+
+* `setat <v>`
+
+  * **Params:** `<v>` = 0x0–0x7 (hex) or decimal (0–7)
+  * **Action:** Set the 3-bit antenna test block (AT\_00 to AT\_02).
+  * **Example:** `> setat 0x4`
+
+* `setpe <v>`
+
+  * **Params:** `<v>` = 0x0–0x3 (hex) or decimal (0–3)
+  * **Action:** Set the 2-bit power enable block (PE\_8P0V\_EN, PE\_3P3V\_EN).
+  * **Example:** `> setpe 0x1`
+
+* `setss <v>`
+
+  * **Params:** `<v>` = 0x0–0x1F (hex) or decimal (0–31)
+  * **Action:** Set the 5-bit sensor select block (SS\_00 to SS\_04).
+  * **Example:** `> setss 0x10`
 
 * `readcpld`
 
-  * **What it does:** Reads and prints the full 48-bit CPLD register in hex and binary.
-  * **Example:**
+  * **Params:** none
+  * **Action:** Read and display the full 48-bit CPLD pattern in MSB-first order.
 
-    ```
-    > readcpld
-    CPLD full pattern: 0x123456789ABC 0001...1011
-    ```
+* `readaz`
 
-* `readaz` / `readel` / `readfm` / `readat` / `readpe` / `readss`
+  * **Params:** none
+  * **Action:** Read and display the current azimuth value (0–2^24–1).
 
-  * **What they do:** Read and report the current value of each functional block in hex and binary.
-  * **Example:**
+* `readel`
 
-    ```
-    > readaz
-    AZ (24-bit): 0x00FFAA 0000000011111111101010
-    ```
+  * **Params:** none
+  * **Action:** Read and display the current elevation value (0–3).
+
+* `readfm`
+
+  * **Params:** none
+  * **Action:** Read and display the current FEM mode (0–15).
+
+* `readat`
+
+  * **Params:** none
+  * **Action:** Read and display the current antenna test bits (0–7).
+
+* `readpe`
+
+  * **Params:** none
+  * **Action:** Read and display the current power enable flags (0–3).
+
+* `readss`
+
+  * **Params:** none
+  * **Action:** Read and display the current sensor select value (0–31).
 
 * `readcommand`
 
-  * **What it does:** Runs all `read*` queries in sequence to display each block’s current value.
-  * **Example:**
+  * **Params:** none
+  * **Action:** Read and display all functional blocks together.
 
-    ```
-    > readcommand
-    AZ: 0x00FFAA 0000000011111111101010
-    EL: 0x2     10
-    FM: 0x9     1001
-    AT: 0x3     011
-    PE: 0x1     01
-    SS: 0x12    10010
-    ```
+### CLI Usage Examples
 
-For screenshots or further guidance, refer to the individual module docstrings and inline examples.
+Below are some sample CLI sessions. User input is prefixed with `>` and system responses follow.
+
+**1. Reading and setting voltages**
+
+```
+> readvolt
+fixed: 3.300 V (target 3.300 V)
+adjustable: 5.000 V (target 5.000 V)
+> setvolt adjustable 6.5
+adjustable target set to 6.500 V
+> readvolt adjustable
+adjustable: 6.500 V (target 6.500 V)
+```
+
+**2. Toggling debug mode**
+
+```
+> debug
+Debug on
+> setaz 0x1
+[DEBUG build] initial bits LSB-first: [ ... ]
+[DEBUG build] applying AZ=1, stages=[0,1,3,...]
+[DEBUG build] bits after AZ: [1,0,0,...]
+Azimuth set to 0x1 (1)
+> debug
+Debug off
+```
+
+**3. Configuring antenna/CPLD fields**
+
+```
+> cpld_write 0x0
+CPLD updated
+> setaz 0x03
+Azimuth set to 0x3 (3)
+> setel 0x2
+Elevation set to 2
+> setfm 0x5
+FEM mode set to 5
+> setpe 0x2
+Power enable set to 2
+> setss 0x1
+Sensor select set to 1
+> readcommand
+CPLD full: 0x00080000000F 00000000100000000000000000001111
+AZ: 0x000003 000000000000000000000011
+EL: 0x2 10
+FM: 0x5 0101
+AT: 0x0 000
+PE: 0x2 10
+SS: 0x1 00001
+```
+
+**4. Reading raw CPLD bits**
+
+```
+> readcpld
+CPLD full: 0x00080000000F 00000000100000000000000000001111
+```
+---
+
+End of README.

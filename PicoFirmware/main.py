@@ -123,7 +123,6 @@ def command_setres(pot, value):
         except:
             pass
         print("Usage: setres <pot> <value>")
-        print("Usage: setres <pot> <value>")
 
 def command_setvolt(ch, voltage):
     try:
@@ -140,7 +139,6 @@ def command_setvolt(ch, voltage):
             import sys; sys.print_exception(e)
         except:
             pass
-        print("Usage: setvolt <fixed|adjustable> <voltage>")
         print("Usage: setvolt <fixed|adjustable> <voltage>")
 
 def command_readvolt(*args):

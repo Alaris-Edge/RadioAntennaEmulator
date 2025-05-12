@@ -78,6 +78,8 @@ def update_leds(filtered_voltages=None, antenna_mode=None, auto_update_led=None,
 
     # LED1: mode indicator
     try:
+        # print('ANT Mode')
+        # print(antenna_mode)
         mode_idx = int(antenna_mode)
     except:
         mode_idx = 0
